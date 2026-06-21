@@ -1,0 +1,83 @@
+{
+  "extraction_id": "b7f3a912-4e5c-4d8a-9f21-3c6e8a7b5d42",
+  "event_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+  "idempotency_key": "9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0",
+  "contract_version": "v1",
+  "routing_decision": {
+    "pipeline_status": "validated",
+    "final_action": "AUTO_SAVE",
+    "overall_confidence": 0.94,
+    "applied_threshold": 0.85,
+    "decision_rationale": {
+      "summary": "Confidence (0.94) >= threshold (0.85); no blocking issues.",
+      "details": {
+        "review_issues": [],
+        "blocking_issues": [],
+        "confidence_gap": 0.09,
+        "warnings_within_tolerance": true
+      }
+    }
+  },
+  "extraction_result": {
+    "metadata": {
+      "title": "Attention Is All You Need",
+      "authors": [
+        {"name": "Ashish Vaswani", "affiliation": "Google Brain", "order": 1},
+        {"name": "Noam Shazeer", "affiliation": "Google Brain", "order": 2}
+      ],
+      "venue": "Advances in Neural Information Processing Systems",
+      "year": 2017,
+      "doi": "10.48550/arXiv.1706.03762",
+      "paper_type": "conference"
+    },
+    "confidence_scores": {
+      "title": 1.0,
+      "authors": 1.0,
+      "venue": 1.0,
+      "year": 1.0,
+      "doi": 1.0,
+      "paper_type": 1.0
+    },
+    "extraction_source": "CROSSREF_API",
+    "embedding": null
+  },
+  "enriched_context": {
+    "faculty_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+    "faculty_name": "Dr. Rajesh Kumar",
+    "faculty_email": "rajesh.kumar@srmap.edu.in",
+    "department_code": "CSE",
+    "faculty_status": "active"
+  },
+  "content_reference": {
+    "raw_text_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "attachments": [
+      {
+        "filename": "vaswani2017attention.pdf",
+        "uri": "s3://promptflow-ingestion-prod-a1b2c3d4/2024/CSE/b7f3a912.pdf",
+        "checksum_sha256": "7f8e9d0c1b2a3948576f5e4d3c2b1a098f7e6d5c4b3a29180f7e6d5c4b3a2918"
+      }
+    ]
+  },
+  "validation_issues": [],
+  "audit_trail": {
+    "trace_id": "00-1234567890abcdef1234567890abcdef-1234567890abcdef-01",
+    "span_id": "abcdef1234567890",
+    "processing_times": {
+      "regex_ms": 12,
+      "crossref_ms": 340,
+      "directory_ms": 45,
+      "routing_ms": 3,
+      "total_ms": 400
+    }
+  },
+  "processing": {
+    "attempts": [
+      {
+        "attempt_number": 1,
+        "timestamp": "2026-06-19T10:30:45.123Z",
+        "status": "success",
+        "source": "CROSSREF_API"
+      }
+    ]
+  }
+}

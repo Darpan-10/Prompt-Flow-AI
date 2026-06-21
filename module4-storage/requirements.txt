@@ -1,0 +1,44 @@
+# Web framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+
+# Pydantic V2
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# Database (async)
+sqlalchemy[asyncio]==2.0.23
+asyncpg==0.29.0
+alembic==1.12.1
+
+# pgvector
+pgvector==0.2.3
+
+# Embeddings (Module 4 generates 768-dim vectors locally per locked spec)
+sentence-transformers==2.2.2
+huggingface-hub==0.16.4
+
+# Kafka
+confluent-kafka==2.3.0
+
+# Redis (idempotency cache)
+redis==5.0.1
+
+# AWS
+boto3==1.33.0
+botocore==1.33.0
+
+# HTTP client
+httpx==0.25.2
+
+# Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+
+# Utilities
+python-dotenv==1.0.0
+python-multipart==0.0.6
+orjson==3.9.10
+tenacity==8.2.3
+structlog==23.2.0

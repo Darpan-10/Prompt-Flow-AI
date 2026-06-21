@@ -1,0 +1,14 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.git/
+.env
+*.egg-info/
+.coverage
+htmlcov/
+tests/
+terraform/
+*.md
+.DS_Store
