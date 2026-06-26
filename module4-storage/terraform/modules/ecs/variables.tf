@@ -93,3 +93,8 @@ variable "api_max_count" {
   type    = number
   default = 6
 }
+
+variable "kms_key_arn" {
+  type        = string
+  description = "ARN of the shared customer-managed KMS key (from the kms module) used to encrypt CloudWatch log groups"
+}

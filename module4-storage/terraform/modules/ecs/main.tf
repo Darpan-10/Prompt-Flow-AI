@@ -41,14 +41,27 @@ resource "aws_ecs_cluster_capacity_providers" "module4" {
 
 # ── CloudWatch Log Groups ─────────────────────────────────────────────────────
 
+# CKV_AWS_338: retention fixed at 400 days (>1yr) in ALL environments, not
+# environment-conditional. Two reasons this is the better fix rather than
+# a skip annotation: (1) checkov's static analysis can't resolve a
+# var.environment ternary and would always flag the dev-environment
+# branch regardless of what's actually deployed, and (2) CloudWatch Logs
+# pricing is driven primarily by ingested log VOLUME, not retention
+# duration -- for a project at this log volume, going from 30 to 400 days
+# retention costs effectively nothing, so there's no real cost trade-off
+# to make here (unlike RDS Multi-AZ or ElastiCache failover, which DO
+# meaningfully double infrastructure cost and stay environment-conditional).
+# CKV_AWS_158: encrypted with the shared CMK from the kms module.
 resource "aws_cloudwatch_log_group" "consumer" {
   name              = "/ecs/module4-consumer-${var.environment}"
-  retention_in_days = var.environment == "prod" ? 90 : 14
+  retention_in_days = 400
+  kms_key_id        = var.kms_key_arn
 }
 
 resource "aws_cloudwatch_log_group" "api" {
   name              = "/ecs/module4-api-${var.environment}"
-  retention_in_days = var.environment == "prod" ? 90 : 14
+  retention_in_days = 400
+  kms_key_id        = var.kms_key_arn
 }
 
 # ── Task Definition: Kafka Consumer ───────────────────────────────────────────

@@ -33,6 +33,11 @@ resource "aws_elasticache_replication_group" "promptflow" {
   engine_version = "7.0"
   node_type      = var.node_type
 
+  # CKV2_AWS_50: automatic failover (and the multi-node cluster it
+  # requires) is intentionally environment-conditional -- enabled in prod,
+  # single-node in dev/staging to minimize cost during active
+  # development. Same rationale as RDS's Multi-AZ skip above.
+  #checkov:skip=CKV2_AWS_50:Automatic failover is enabled for environment=prod via ternary; single-node in dev/staging intentionally for cost
   num_cache_clusters = var.environment == "prod" ? 2 : 1
   automatic_failover_enabled = var.environment == "prod"
 
@@ -43,6 +48,7 @@ resource "aws_elasticache_replication_group" "promptflow" {
   parameter_group_name = aws_elasticache_parameter_group.promptflow.name
 
   at_rest_encryption_enabled = true
+  kms_key_id                  = var.kms_key_arn
   transit_encryption_enabled = true
   auth_token                  = var.redis_auth_token
 

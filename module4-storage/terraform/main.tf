@@ -38,9 +38,15 @@ data "aws_subnets" "private" {
     name   = "vpc-id"
     values = [data.aws_vpc.main.id]
   }
-  tags = {
-    Tier = "private"
-  }
+}
+
+# ── Shared KMS Key (encrypts RDS, Secrets Manager, ElastiCache, CloudWatch Logs) ──
+
+module "kms" {
+  source = "./modules/kms"
+
+  environment = var.environment
+  aws_region  = var.aws_region
 }
 
 # ── Security Groups ────────────────────────────────────────────────────────────
@@ -66,6 +72,7 @@ module "rds" {
   allocated_storage      = var.allocated_storage
   max_allocated_storage  = var.max_allocated_storage
   db_password            = var.db_password
+  kms_key_arn            = module.kms.key_arn
 }
 
 # ── ElastiCache Redis ───────────────────────────────────────────────────────────
@@ -78,6 +85,7 @@ module "elasticache" {
   security_group_id  = module.security_groups.redis_sg_id
   node_type          = var.redis_node_type
   redis_auth_token   = var.redis_auth_token
+  kms_key_arn        = module.kms.key_arn
 }
 
 # ── IAM Roles ───────────────────────────────────────────────────────────────────
@@ -114,6 +122,7 @@ module "iam" {
 #   kafka_bootstrap_brokers  = var.kafka_bootstrap_brokers
 #   target_group_arn         = var.target_group_arn
 #   alb_listener_arn          = var.alb_listener_arn
+#   kms_key_arn               = module.kms.key_arn
 # }
 
 
@@ -147,4 +156,8 @@ output "ecs_task_role_arn" {
 
 output "module4_service_sg_id" {
   value = module.security_groups.module4_service_sg_id
+}
+
+output "kms_key_arn" {
+  value = module.kms.key_arn
 }

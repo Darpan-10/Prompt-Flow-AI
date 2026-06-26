@@ -24,3 +24,8 @@ variable "redis_auth_token" {
   sensitive   = true
   description = "Redis AUTH token (min 16 chars)"
 }
+
+variable "kms_key_arn" {
+  type        = string
+  description = "ARN of the shared customer-managed KMS key (from the kms module) used to encrypt at-rest data"
+}

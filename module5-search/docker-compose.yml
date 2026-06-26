@@ -1,0 +1,50 @@
+# Module 5: Search & Discovery
+#
+# IMPORTANT: This compose file does NOT define its own Postgres/Redis --
+# Module 5 is a READ-ONLY consumer of Module 4's database and a co-tenant
+# of Module 4's Redis instance (per the locked architecture decision).
+#
+# Prerequisite: Module 4's docker-compose stack must already be running
+# (its postgres + redis + kafka services), since this file joins Module
+# 4's Docker network as "external" to reach those services by hostname.
+#
+#   cd ../module4-storage && docker compose up -d postgres redis
+#
+# Then from THIS directory:
+#
+#   docker compose up -d --build
+#
+# See SETUP.md for the full walkthrough.
+
+services:
+  search-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: m5_search_api
+    env_file: .env
+    environment:
+      # Override to use Module 4's container hostnames (resolvable because
+      # this service joins Module 4's Docker network below)
+      DATABASE_URL: postgresql+asyncpg://promptflow:secret@postgres:5432/promptflow
+      REDIS_URL: redis://:localdevtoken@redis:6379
+    ports:
+      - "8005:8005"
+    deploy:
+      resources:
+        limits:
+          memory: 2g # embedding model + PyTorch runtime overhead (same as Module 4 consumer)
+    networks:
+      - promptflow_shared_net
+    restart: on-failure
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8005/health" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 45s # generous startup window for embedding model load
+
+networks:
+  promptflow_shared_net:
+    external: true
+    name: promptflow_shared_net

@@ -1,0 +1,40 @@
+# FastAPI & Web
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+
+# Pydantic V2
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# Database (async, read-only to Module 4)
+sqlalchemy[asyncio]==2.0.23
+asyncpg==0.29.0
+
+# Embeddings (same model as Module 4)
+sentence-transformers==2.2.2
+huggingface-hub==0.16.4
+
+# Redis (caching + pub/sub invalidation)
+redis==5.0.1
+
+# Search/Analytics libraries
+numpy==1.26.4
+
+# JWT validation (for RLS context from Module 1)
+PyJWT==2.8.0
+
+# HTTP client
+httpx==0.25.2
+
+# Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+locust==2.17.0
+
+# Utilities
+python-dotenv==1.0.0
+python-multipart==0.0.6
+orjson==3.9.10
+tenacity==8.2.3
+structlog==23.2.0

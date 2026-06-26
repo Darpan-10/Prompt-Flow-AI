@@ -36,3 +36,8 @@ variable "db_password" {
   sensitive   = true
   description = "Master password for RDS instance"
 }
+
+variable "kms_key_arn" {
+  type        = string
+  description = "ARN of the shared customer-managed KMS key (from the kms module) used to encrypt storage, Performance Insights, and the Secrets Manager secret"
+}

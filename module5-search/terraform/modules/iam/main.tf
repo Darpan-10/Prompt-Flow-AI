@@ -1,5 +1,10 @@
 # terraform/modules/iam/main.tf
-# Module 4: IAM roles for ECS task execution + Secrets Manager access
+# Module 5: IAM roles for ECS task execution + Secrets Manager access.
+#
+# Deliberately narrower than Module 4's IAM module: Module 5 never
+# touches S3 (it has no attachments/PDFs to read), so there is no
+# s3:GetObject grant here at all -- only Secrets Manager read access
+# (for the shared DB credentials) and CloudWatch Logs write access.
 
 terraform {
   required_providers {
@@ -15,7 +20,7 @@ data "aws_caller_identity" "current" {}
 # ── ECS Task Execution Role (pulls image, writes logs) ────────────────────────
 
 resource "aws_iam_role" "ecs_execution" {
-  name = "module4-ecs-execution-${var.environment}"
+  name = "module5-ecs-execution-${var.environment}"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -35,7 +40,7 @@ resource "aws_iam_role_policy_attachment" "ecs_execution_managed" {
 # ── ECS Task Role (application permissions — least privilege) ────────────────
 
 resource "aws_iam_role" "ecs_task" {
-  name = "module4-ecs-task-${var.environment}"
+  name = "module5-ecs-task-${var.environment}"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -47,27 +52,18 @@ resource "aws_iam_role" "ecs_task" {
   })
 }
 
-resource "aws_iam_role_policy" "module4_secrets_access" {
-  name = "module4-secrets-access-${var.environment}"
+resource "aws_iam_role_policy" "module5_secrets_access" {
+  name = "module5-secrets-access-${var.environment}"
   role = aws_iam_role.ecs_task.id
 
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "ReadDbAndRedisSecrets"
-        Effect = "Allow"
-        Action = ["secretsmanager:GetSecretValue"]
-        Resource = compact([
-          var.db_secret_arn,
-          var.redis_secret_arn,
-        ])
-      },
-      {
-        Sid    = "S3ReadAttachments"
-        Effect = "Allow"
-        Action = ["s3:GetObject"]
-        Resource = ["${var.s3_bucket_arn}/*"]
+        Sid      = "ReadDbSecret"
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = [var.db_secret_arn]
       },
       {
         Sid    = "CloudWatchLogs"
@@ -76,7 +72,7 @@ resource "aws_iam_role_policy" "module4_secrets_access" {
           "logs:CreateLogStream",
           "logs:PutLogEvents",
         ]
-        Resource = ["arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/ecs/module4-*"]
+        Resource = ["arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/ecs/module5-*"]
       }
     ]
   })

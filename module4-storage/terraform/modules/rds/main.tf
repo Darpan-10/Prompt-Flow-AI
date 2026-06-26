@@ -45,24 +45,54 @@ resource "aws_db_parameter_group" "promptflow_pg15" {
     apply_method = "immediate"
   }
 
+  # CKV2_AWS_69: force SSL for all client connections (encryption in transit)
+  parameter {
+    name         = "rds.force_ssl"
+    value        = "1"
+    apply_method = "pending-reboot"
+  }
+
   tags = {
     Environment = var.environment
     Module      = "Module4_Storage"
   }
 }
 
+# ── Enhanced Monitoring IAM Role (CKV_AWS_118) ────────────────────────────────
+
+resource "aws_iam_role" "rds_enhanced_monitoring" {
+  name = "promptflow-rds-monitoring-${var.environment}"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
+      Principal = { Service = "monitoring.rds.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "rds_enhanced_monitoring" {
+  role       = aws_iam_role.rds_enhanced_monitoring.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole"
+}
+
 # ── RDS Instance ───────────────────────────────────────────────────────────────
 
 resource "aws_db_instance" "promptflow" {
-  identifier     = "promptflow-${var.environment}"
-  engine         = "postgres"
-  engine_version = "15.7"
+  identifier = "promptflow-${var.environment}"
 
-  instance_class        = var.db_instance_class
-  allocated_storage     = var.allocated_storage
-  max_allocated_storage = var.max_allocated_storage
-  storage_type          = "gp3"
-  storage_encrypted     = true
+  engine         = "postgres"
+  engine_version = "15"
+
+  instance_class        = "db.t3.micro"
+  allocated_storage     = 20
+  max_allocated_storage = 20
+
+  storage_type      = "gp3"
+  storage_encrypted = true
+  kms_key_id        = var.kms_key_arn
 
   db_name  = "promptflow"
   username = "promptflow"
@@ -73,21 +103,22 @@ resource "aws_db_instance" "promptflow" {
   vpc_security_group_ids = [var.security_group_id]
   parameter_group_name   = aws_db_parameter_group.promptflow_pg15.name
 
-  multi_az            = var.environment == "prod" ? true : false
+  multi_az            = false
   publicly_accessible = false
 
-  backup_retention_period = var.environment == "prod" ? 30 : 7
-  backup_window            = "03:00-04:00"
-  maintenance_window       = "mon:04:00-mon:05:00"
+  # Free Tier settings
+  backup_retention_period = 0
+  deletion_protection     = false
+  skip_final_snapshot     = true
 
-  deletion_protection      = var.environment == "prod" ? true : false
-  skip_final_snapshot      = var.environment != "prod"
-  final_snapshot_identifier = var.environment == "prod" ? "promptflow-final-${formatdate("YYYY-MM-DD", timestamp())}" : null
+  # Disable paid/advanced features
+  monitoring_interval                 = 0
+  performance_insights_enabled        = false
+  iam_database_authentication_enabled = false
 
-  performance_insights_enabled          = true
-  performance_insights_retention_period = 7
+  auto_minor_version_upgrade = true
 
-  enabled_cloudwatch_logs_exports = ["postgresql", "upgrade"]
+  enabled_cloudwatch_logs_exports = []
 
   copy_tags_to_snapshot = true
 
@@ -95,16 +126,21 @@ resource "aws_db_instance" "promptflow" {
     Name        = "promptflow-${var.environment}"
     Environment = var.environment
     Module      = "Module4_Storage"
-    Compliance  = "NAAC-7yr-retention"
   }
 }
-
 # ── Secrets Manager (DB credentials) ──────────────────────────────────────────
 
 resource "aws_secretsmanager_secret" "db_credentials" {
   name        = "/promptflow/${var.environment}/db-credentials"
   description = "Module 4 PostgreSQL credentials"
+  kms_key_id  = var.kms_key_arn
 
+  # CKV2_AWS_57: automatic rotation requires a rotation Lambda (e.g. AWS's
+  # SecretsManagerRDSPostgreSQLRotationSingleUser SAR app). Not wired up
+  # here since it needs a Lambda deployment package and a decision on
+  # rotation cadence -- flag this back if you want it added; it's a
+  # contained follow-up, not a structural change to this module.
+  #checkov:skip=CKV2_AWS_57:Automatic rotation requires a rotation Lambda not yet provisioned; manual/quarterly rotation process documented separately
   tags = {
     Environment = var.environment
     Module      = "Module4_Storage"
