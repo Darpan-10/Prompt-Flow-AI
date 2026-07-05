@@ -1,0 +1,46 @@
+# Web framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+
+# Pydantic V2
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# Database (read-write to the shared PostgreSQL -- Module 6 writes
+# generated_reports/report_checksums/audit_log rows, and reads
+# papers/validation_issues for the compliance gate)
+sqlalchemy[asyncio]==2.0.23
+asyncpg==0.29.0
+alembic==1.12.1
+
+# Report rendering (deterministic, NO LLM calls anywhere in this module)
+# NOTE: pinned to 69.0, NOT the 61.x the original spec mentioned -- 61.x
+# is incompatible with pydyf>=0.11.0 (a confirmed upstream breaking
+# change, see SETUP.md). Verified working: weasyprint==69.0 +
+# pydyf==0.12.1 actually renders a valid PDF in this sandbox.
+weasyprint==69.0
+jinja2==3.1.2
+openpyxl==3.1.2
+
+# AWS
+boto3==1.33.0
+botocore==1.33.0
+
+# JWT validation (RLS context from Module 1, same pattern as Module 5)
+PyJWT==2.8.0
+
+# HTTP client
+httpx==0.25.2
+
+# Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+moto[s3]==4.2.13
+
+# Utilities
+python-dotenv==1.0.0
+python-multipart==0.0.6
+orjson==3.9.10
+tenacity==8.2.3
+structlog==23.2.0

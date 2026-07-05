@@ -82,11 +82,20 @@ class PaperRepository:
         """
         Update paper columns.
         trg_paper_versioning fires and inserts into paper_versions automatically.
-        change_reason is passed via SET LOCAL app.change_reason.
+        change_reason is passed via set_config('app.change_reason', ...).
         """
-        # Inject change_reason for the trigger to pick up
+        # Inject change_reason for the trigger to pick up.
+        # CRITICAL FIX: was `SET LOCAL app.change_reason = :r`, which
+        # raises a PostgreSQL syntax error ("syntax error at or near
+        # '$1'") -- SET is a utility statement and does not accept
+        # protocol-level bind parameters for the value being set. Found
+        # via real-PostgreSQL integration testing while building
+        # Module 6 (same RLS context pattern); see app/database.py's
+        # set_rls_context() docstring for the full explanation.
+        # set_config() is a regular function call, so bind parameters
+        # work normally here.
         await self.session.execute(
-            text("SET LOCAL app.change_reason = :r"),
+            text("SELECT set_config('app.change_reason', :r, true)"),
             {"r": data.change_reason},
         )
 

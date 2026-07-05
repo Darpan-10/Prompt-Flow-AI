@@ -58,10 +58,10 @@ resource "aws_iam_role_policy" "module4_secrets_access" {
         Sid    = "ReadDbAndRedisSecrets"
         Effect = "Allow"
         Action = ["secretsmanager:GetSecretValue"]
-        Resource = compact([
+        Resource = [
           var.db_secret_arn,
           var.redis_secret_arn,
-        ])
+        ]
       },
       {
         Sid    = "S3ReadAttachments"

@@ -1,7 +1,7 @@
 """
 Module 5 – Paper Repository
 Read-only queries against Module 4's papers table with RLS context.
-All queries SET LOCAL app.current_department and related context BEFORE executing.
+All queries call set_rls_context() (via set_config()) BEFORE executing.
 """
 
 from __future__ import annotations
@@ -18,26 +18,53 @@ log = logging.getLogger(__name__)
 
 
 async def set_rls_context(
-    session,
+    session: AsyncSession,
     department_code: str,
     role: str,
     user_id: str,
 ) -> None:
+    """
+    Set session-level context for RLS policies.
+    Must be called BEFORE any search queries.
+
+    CRITICAL FIX: uses set_config(name, value, true), NOT
+    `SET LOCAL ... = :param`. Two real bugs, both verified empirically
+    against a real PostgreSQL 16 instance while building Module 6 (which
+    shares this exact RLS context pattern -- see Module 6's
+    app/database.py for the full writeup):
+
+    1. `SET LOCAL app.current_department = :dept` (a bound parameter via
+       SQLAlchemy's text()) raises `PostgresSyntaxError: syntax error at
+       or near "$1"`. PostgreSQL's SET command is a utility statement,
+       not regular DML, and does not accept protocol-level bind
+       parameters for the value being set. This means every search
+       request would have failed the moment it reached a real asyncpg
+       connection.
+    2. `SET LOCAL app.current_role = ...` separately raises a DIFFERENT
+       syntax error: `current_role` is a SQL-reserved keyword that
+       PostgreSQL's grammar special-cases even as the second component
+       of a dotted custom GUC name.
+
+    set_config() fixes both: it's a function call (bind parameters work
+    normally), and the variable name is a STRING argument (so the
+    reserved-keyword restriction doesn't apply). No changes needed to
+    Module 4's RLS POLICY definitions, which already read via
+    current_setting('app.current_role', true) -- a function call,
+    unaffected by either bug.
+    """
     await session.execute(
-        text(
-            """
-            SELECT
-                set_config('app.current_department', :dept, true),
-                set_config('app.current_role', :role, true),
-                set_config('app.current_user_id', :uid, true)
-            """
-        ),
-        {
-            "dept": department_code,
-            "role": role,
-            "uid": user_id,
-        },
+        text("SELECT set_config('app.current_department', :dept, true)"),
+        {"dept": department_code},
     )
+    await session.execute(
+        text("SELECT set_config('app.current_role', :role, true)"),
+        {"role": role},
+    )
+    await session.execute(
+        text("SELECT set_config('app.current_user_id', :uid, true)"),
+        {"uid": user_id},
+    )
+
 
 class PaperRepository:
     """

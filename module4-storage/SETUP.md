@@ -236,14 +236,54 @@ docker exec m4_postgres psql -U promptflow -d promptflow -c \
 ## A.9 — Run the test suite
 
 ```bash
-pytest tests/test_module4.py -v
+pytest tests/test_module4.py tests/test_rls_context_fail_closed.py -v
 ```
 
-Expected: **42 passed**. These are all unit tests against Pydantic schemas,
-the consumer's message-building logic, and routing rules — they mock the
-embedding model call and don't require Postgres/Kafka/Redis to be running.
-If you see import errors here, go back to step A.3 and confirm
+Expected: **52 passed**. These are all unit tests against Pydantic schemas,
+the consumer's message-building logic, routing rules, and (per
+`CRITICAL_PATCH_NOTES.md`'s second patch round) the auth-header
+fail-closed behavior — they mock the embedding model and database
+session and don't require Postgres/Kafka/Redis to be running. If you
+see import errors here, go back to step A.3 and confirm
 `pip install -r requirements.txt` completed without errors.
+
+### Running the real-PostgreSQL RLS regression tests
+
+`tests/integration_real_db/` connects directly to a real PostgreSQL
+instance and proves the RLS mechanism itself is sound — not just that
+the Python code calling it doesn't raise, but that the actual database
+enforces department isolation, admin bypass, and (per
+`CRITICAL_PATCH_NOTES.md`) that `FORCE ROW LEVEL SECURITY` is actually
+doing something.
+
+**This setup matters and is easy to get subtly wrong:** the test
+database's schema must be created by, and therefore *owned by*, the
+SAME role the test connects as — matching production exactly, where
+`docker-compose.yml`'s `POSTGRES_USER` / Terraform's RDS
+`master_username` (`promptflow`) is the same role that both runs Alembic
+(owning every table) and the running application connects as. A test
+setup where a `postgres` superuser creates the schema and a different,
+merely-GRANTed role queries it gives false confidence — PostgreSQL does
+not apply RLS to a table's owner by default, so such a test would pass
+even with `FORCE ROW LEVEL SECURITY` missing entirely.
+
+Also important: if you use your system's default `postgres` role for
+this, it is very likely a TRUE PostgreSQL superuser (not just an RDS-style
+`rds_superuser` role membership), and true superusers bypass RLS
+*unconditionally* — `FORCE ROW LEVEL SECURITY` cannot override that. Use
+a dedicated `NOSUPERUSER` role for this test to be meaningful.
+
+```bash
+sudo -u postgres psql -c "CREATE ROLE m4_test_owner LOGIN PASSWORD 'testpass' NOSUPERUSER CREATEDB;"
+sudo -u postgres psql -c "CREATE DATABASE module4_rls_test OWNER m4_test_owner;"
+sudo -u postgres psql -d module4_rls_test -c 'CREATE EXTENSION IF NOT EXISTS "uuid-ossp";'
+
+TEST_DATABASE_URL="postgresql+asyncpg://m4_test_owner:testpass@localhost/module4_rls_test" \
+  pytest tests/integration_real_db/ -v
+```
+
+Expected: **11 passed** (4 in `test_set_rls_context_real_db.py`, 7 in
+`test_papers_rls_policy_real_db.py`).
 
 ## A.10 — Start the Kafka consumer
 
@@ -338,14 +378,28 @@ docker exec m4_postgres psql -U promptflow -d promptflow -c \
 
 ## A.14 — Test full-text search
 
+CRITICAL FIX applied to this module (see CRITICAL_PATCH_NOTES.md): all
+three of X-Department-Code, X-Role, and X-User-Id are now REQUIRED on
+every request -- omitting any of them returns 401, rather than the old
+behavior of silently defaulting to full admin access. Always pass all
+three:
+
 ```bash
 curl -G 'http://localhost:8003/api/v1/search/fulltext' \
+  -H 'X-Department-Code: CSE' \
   -H 'X-Role: admin' \
+  -H 'X-User-Id: local-dev-tester' \
   --data-urlencode 'q=attention'
 ```
 
 (`X-Role: admin` bypasses Row-Level Security for local testing — in
-production this comes from the JWT issued by Module 1.)
+production these headers are injected by an upstream authenticated
+gateway/Module 1 after validating a real JWT.)
+
+If you'd rather not type all three every time during local dev, you can
+set `ALLOW_MISSING_AUTH_HEADERS=true` in your `.env` -- but this MUST be
+`false` (the default) in any deployed environment; it exists purely as a
+local convenience escape hatch and is logged loudly every time it's used.
 
 ## A.15 — Test semantic search (requires at least one PUBLISHED paper with an embedding)
 
@@ -360,7 +414,9 @@ print(json.dumps(v))
 
 curl -X POST http://localhost:8003/api/v1/search/semantic \
   -H 'Content-Type: application/json' \
+  -H 'X-Department-Code: CSE' \
   -H 'X-Role: admin' \
+  -H 'X-User-Id: local-dev-tester' \
   -d "{\"embedding\": $(cat /tmp/test_embedding.json), \"limit\": 5, \"similarity_threshold\": 0.5}"
 ```
 

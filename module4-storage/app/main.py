@@ -15,12 +15,8 @@ from uuid import UUID
 import redis.asyncio as aioredis
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-# pyrefly: ignore [missing-import]
 from fastapi.responses import JSONResponse, StreamingResponse
-# pyrefly: ignore [missing-import]
 from sqlalchemy.ext.asyncio import AsyncSession
-# pyrefly: ignore [missing-import]
-from sentence_transformers import SentenceTransformer
 
 from app.config import settings
 from app.database import check_db_health, get_db, set_rls_context, set_admin_context
@@ -60,18 +56,9 @@ log = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator:
     log.info("Module 4 Storage API starting up...")
-    # Load embedding model at startup to fail early if download fails
-    log.info("Loading embedding model...")
-    try:
-        app.state.model = SentenceTransformer('all-mpnet-base-v2')
-        log.info("Embedding model loaded successfully")
-    except Exception as e:
-        log.error(f"Failed to load embedding model: {e}")
-        raise
-
     yield
-
     log.info("Module 4 Storage API shutting down...")
+
 
 # ── App ───────────────────────────────────────────────────────────────────────
 
@@ -93,20 +80,70 @@ app.add_middleware(
 
 # ── RLS middleware (injects department context from request headers) ───────────
 
+# Roles Module 1 is expected to ever issue. Anything outside this set
+# gets rejected rather than silently trusted -- a typo'd or otherwise
+# unexpected role string reaching set_rls_context() unchecked could
+# interact with the RLS policy's `current_role = 'admin'` comparison in
+# ways nobody has actually reviewed.
+_VALID_ROLES = {"faculty", "coordinator", "hod", "admin", "system_worker"}
+
+
 async def rls_context(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> AsyncSession:
     """
-    Inject RLS context per-request.
-    In production, these headers come from the JWT middleware in Module 1.
-    For development, defaults to admin bypass.
-    """
-    department = request.headers.get("X-Department-Code", "__admin__")
-    role       = request.headers.get("X-Role", "admin")
-    user_id    = request.headers.get("X-User-Id", "system")
+    Inject RLS context per-request from upstream-authenticated headers.
 
-    if role == "admin" or department == "__admin__":
+    CRITICAL FIX (found via a full cross-module RLS security sweep): this
+    function used to default to `department="__admin__"` and
+    `role="admin"` whenever the X-Department-Code/X-Role/X-User-Id
+    headers were simply ABSENT (not malformed -- just missing, which is
+    the default for any request that doesn't explicitly set them),
+    unconditionally granting full cross-department admin access via
+    set_admin_context(). Every data-touching route in this file uses
+    this dependency, meaning the entire API was open-by-default to
+    anyone who omitted these three headers. Now: missing or empty
+    headers are rejected with 401. The old "default to admin" behavior
+    is available ONLY behind settings.ALLOW_MISSING_AUTH_HEADERS=true,
+    which must be false in any deployed environment (see config.py).
+
+    Module 4 trusts these headers as being injected by an upstream
+    authenticated gateway (Module 1) rather than parsing a JWT itself --
+    that trust-boundary architecture is unchanged; only the "what happens
+    when the headers aren't there" behavior changed.
+    """
+    department = request.headers.get("X-Department-Code")
+    role = request.headers.get("X-Role")
+    user_id = request.headers.get("X-User-Id")
+
+    if not department or not role or not user_id:
+        if settings.ALLOW_MISSING_AUTH_HEADERS:
+            # Local-dev-only escape hatch -- NEVER true in a deployed
+            # environment. Falls back to a clearly-fake, clearly-logged
+            # identity rather than silently becoming admin.
+            log.warning(
+                "ALLOW_MISSING_AUTH_HEADERS=true: request missing auth "
+                "headers, using local-dev fallback identity. This MUST "
+                "NOT happen in production."
+            )
+            await set_rls_context(
+                db, department_code="__local_dev__", role="admin",
+                user_id="local-dev-no-headers", actor_type="user",
+            )
+            return db
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing required auth headers: X-Department-Code, X-Role, X-User-Id",
+        )
+
+    if role not in _VALID_ROLES:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Invalid X-Role header: {role!r}",
+        )
+
+    if role == "admin":
         await set_admin_context(db)
     else:
         await set_rls_context(

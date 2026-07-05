@@ -26,15 +26,16 @@ RUN pip install --no-cache-dir -r requirements.txt
 # ── Pre-download the embedding model into the image ─────────────────────────
 # Same model as Module 4 (all-mpnet-base-v2) so query and document
 # embeddings are dimensionally and semantically comparable.
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-mpnet-base-v2')"
 
 # App code
 COPY app/ ./app/
 COPY scripts/ ./scripts/
-COPY tests/ ./tests/
+
 # Non-root user
-RUN useradd -m -u 1000 appuser && \
-    mkdir -p /home/appuser/.cache && \
-    chown -R appuser:appuser /app /home/appuser
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+RUN mkdir -p /home/appuser/.cache && cp -r /root/.cache/* /home/appuser/.cache/ 2>/dev/null || true
+RUN chown -R appuser:appuser /home/appuser/.cache
 ENV HF_HOME=/home/appuser/.cache/huggingface
 ENV SENTENCE_TRANSFORMERS_HOME=/home/appuser/.cache/torch/sentence_transformers
 USER appuser

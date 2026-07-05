@@ -522,6 +522,42 @@ Results should differ based on department (unless you're using the
 `admin` role, which the locked design treats as seeing across all
 departments).
 
+### Running the real-PostgreSQL RLS regression tests
+
+The tests above exercise the running API end-to-end, but this repo also
+ships two pytest files that connect directly to a real PostgreSQL
+instance and prove the RLS *mechanism itself* is sound, independent of
+the API layer: `tests/integration_real_db/test_set_rls_context_real_db.py`
+(does `set_rls_context()` execute without raising, do values round-trip
+correctly) and `tests/integration_real_db/test_department_isolation_real_db.py`
+(does a non-admin, CSE-scoped session actually fail to see an ECE
+department's paper).
+
+**This setup matters and is easy to get subtly wrong:** the test
+database's schema must be created by, and therefore *owned by*, the
+SAME role the test connects as — matching production, where
+`docker-compose.yml`'s `POSTGRES_USER` / Terraform's RDS
+`master_username` (`promptflow`) is the same role that both runs Alembic
+(owning every table) and the running application connects as via
+`DATABASE_URL`. PostgreSQL does not apply RLS policies to a table's
+owner by default — a separate exemption from the well-known superuser
+bypass — so a test setup where a `postgres` superuser creates the
+schema and a different, merely-GRANTed role queries it would give false
+confidence: it would pass even if the real Module 4 migration were
+missing `FORCE ROW LEVEL SECURITY` (see Module 4's
+`CRITICAL_PATCH_NOTES.md` for the full story on why that fix mattered).
+
+```bash
+sudo -u postgres psql -c "CREATE ROLE m5_test_reader LOGIN PASSWORD 'testpass' NOSUPERUSER CREATEDB;"
+sudo -u postgres psql -c "CREATE DATABASE module5_rls_test OWNER m5_test_reader;"
+sudo -u postgres psql -d module5_rls_test -c 'CREATE EXTENSION IF NOT EXISTS "uuid-ossp";'
+
+TEST_DATABASE_URL="postgresql+asyncpg://m5_test_reader:testpass@localhost/module5_rls_test" \
+  pytest tests/integration_real_db/ -v
+```
+
+Expected: **6 passed** (3 in each file).
+
 ---
 
 ## 3. Common problems and fixes

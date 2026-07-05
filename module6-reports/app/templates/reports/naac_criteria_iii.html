@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NAAC Criteria III Report — {{ department }} {{ academic_year }}</title>
+<style>
+    @page {
+        size: A4;
+        margin: 2cm 1.5cm;
+        @bottom-center {
+            content: "Page " counter(page) " of " counter(pages);
+            font-size: 9px;
+            color: #666;
+        }
+    }
+    body {
+        font-family: "DejaVu Sans", Arial, sans-serif;
+        font-size: 11px;
+        color: #1a1a1a;
+        line-height: 1.4;
+    }
+    .header {
+        border-bottom: 3px solid #003366;
+        padding-bottom: 10px;
+        margin-bottom: 20px;
+    }
+    .header h1 {
+        font-size: 18px;
+        color: #003366;
+        margin: 0 0 4px 0;
+    }
+    .header .subtitle {
+        font-size: 12px;
+        color: #555;
+        margin: 0;
+    }
+    .meta-table {
+        width: 100%;
+        margin-bottom: 20px;
+        font-size: 10px;
+    }
+    .meta-table td {
+        padding: 3px 8px 3px 0;
+    }
+    .meta-table .label {
+        font-weight: bold;
+        color: #003366;
+        width: 140px;
+    }
+    .summary-box {
+        display: flex;
+        background: #f0f4f8;
+        border: 1px solid #c0d0e0;
+        border-radius: 4px;
+        padding: 10px 15px;
+        margin-bottom: 20px;
+    }
+    .summary-item {
+        display: inline-block;
+        margin-right: 30px;
+    }
+    .summary-item .count {
+        font-size: 16px;
+        font-weight: bold;
+        color: #003366;
+        display: block;
+    }
+    .summary-item .caption {
+        font-size: 9px;
+        color: #666;
+    }
+    table.papers {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 10px;
+    }
+    table.papers th {
+        background: #003366;
+        color: white;
+        text-align: left;
+        padding: 6px 8px;
+        font-size: 10px;
+        font-weight: bold;
+    }
+    table.papers td {
+        padding: 6px 8px;
+        border-bottom: 1px solid #ddd;
+        vertical-align: top;
+        font-size: 9.5px;
+    }
+    table.papers tr:nth-child(even) {
+        background: #f8fafb;
+    }
+    .confidence-high { color: #1a7a3c; font-weight: bold; }
+    .confidence-mid { color: #b8860b; font-weight: bold; }
+    .confidence-low { color: #c0392b; font-weight: bold; }
+    .footer-note {
+        margin-top: 25px;
+        padding-top: 10px;
+        border-top: 1px solid #ccc;
+        font-size: 8.5px;
+        color: #888;
+    }
+    .no-papers {
+        text-align: center;
+        padding: 40px;
+        color: #888;
+        font-style: italic;
+    }
+</style>
+</head>
+<body>
+
+<div class="header">
+    <h1>NAAC Criteria III — Research, Innovations &amp; Extension</h1>
+    <p class="subtitle">SRM University AP &mdash; Department of {{ department }}</p>
+</div>
+
+<table class="meta-table">
+    <tr>
+        <td class="label">Department</td><td>{{ department }}</td>
+        <td class="label">Academic Year</td><td>{{ academic_year }}</td>
+    </tr>
+    <tr>
+        <td class="label">Generated At (UTC)</td><td>{{ generated_at }}</td>
+        <td class="label">Report Type</td><td>NAAC Criteria III Research Report</td>
+    </tr>
+</table>
+
+<div class="summary-box">
+    <div class="summary-item">
+        <span class="count">{{ total_papers }}</span>
+        <span class="caption">Total Publications</span>
+    </div>
+    <div class="summary-item">
+        <span class="count">{{ journal_count }}</span>
+        <span class="caption">Journal Articles</span>
+    </div>
+    <div class="summary-item">
+        <span class="count">{{ conference_count }}</span>
+        <span class="caption">Conference Papers</span>
+    </div>
+</div>
+
+{% if papers %}
+<table class="papers">
+    <thead>
+        <tr>
+            <th style="width: 28%;">Title</th>
+            <th style="width: 18%;">Author(s)</th>
+            <th style="width: 16%;">Venue</th>
+            <th style="width: 6%;">Year</th>
+            <th style="width: 6%;">Type</th>
+            <th style="width: 14%;">DOI</th>
+            <th style="width: 6%;">Conf.</th>
+            <th style="width: 6%;">Faculty</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for paper in papers %}
+        <tr>
+            <td>{{ paper.title }}</td>
+            <td>{% for a in paper.authors %}{{ a.name }}{% if not loop.last %}, {% endif %}{% endfor %}</td>
+            <td>{{ paper.venue or "—" }}</td>
+            <td>{{ paper.year }}</td>
+            <td>{{ paper.paper_type | capitalize }}</td>
+            <td style="font-size: 8px;">{{ paper.doi or "—" }}</td>
+            <td class="{% if paper.overall_confidence >= 0.85 %}confidence-high{% elif paper.overall_confidence >= 0.7 %}confidence-mid{% else %}confidence-low{% endif %}">
+                {{ "%.2f"|format(paper.overall_confidence) }}
+            </td>
+            <td style="font-size: 8px;">{{ paper.faculty_email.split('@')[0] }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="no-papers">
+    No published papers found for {{ department }} in academic year {{ academic_year }}.
+</div>
+{% endif %}
+
+<div class="footer-note">
+    This is a deterministically generated report. No AI/LLM processing was used to produce this
+    document &mdash; all data is sourced directly from verified, published records in the PromptFlow AI
+    database. A SHA-256 checksum of this file is stored alongside its metadata for tamper-proof
+    integrity verification. Generated by Module 6 (Report Generator), PromptFlow AI, SRM University AP.
+</div>
+
+</body>
+</html>

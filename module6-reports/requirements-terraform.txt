@@ -1,0 +1,7 @@
+# Python tooling used to validate the Terraform in terraform/ WITHOUT
+# requiring the terraform CLI binary itself (see TERRAFORM_TESTING.md).
+# Same pinned versions as Module 4/5's requirements-terraform.txt.
+
+python-hcl2==8.1.2
+checkov==3.3.1
+pytest==7.4.3

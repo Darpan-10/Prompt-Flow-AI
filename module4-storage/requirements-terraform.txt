@@ -1,0 +1,11 @@
+# Python tooling used to validate the Terraform in terraform/ WITHOUT
+# requiring the terraform CLI binary itself (see TERRAFORM_TESTING.md for
+# why, and for the real `terraform validate`/`plan` workflow once you
+# have the CLI installed locally).
+#
+# Install into a throwaway venv, separate from the application's own
+# requirements.txt -- these are dev-time tools, never shipped/deployed.
+
+python-hcl2==8.1.2
+checkov==3.3.1
+pytest==7.4.3

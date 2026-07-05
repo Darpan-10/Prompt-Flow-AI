@@ -106,7 +106,7 @@ resource "aws_security_group_rule" "module5_to_rds" {
   protocol                 = "tcp"
   security_group_id        = var.module4_rds_sg_id
   source_security_group_id = aws_security_group.module5_service.id
-  description = "PostgreSQL from Module 5 search-api added by Module 5 Terraform state"
+  description               = "PostgreSQL from Module 5 search-api (added by Module 5's Terraform state)"
 }
 
 resource "aws_security_group_rule" "module5_to_redis" {
@@ -116,7 +116,7 @@ resource "aws_security_group_rule" "module5_to_redis" {
   protocol                 = "tcp"
   security_group_id        = var.module4_redis_sg_id
   source_security_group_id = aws_security_group.module5_service.id
-  description = "Redis from Module 5 search-api added by Module 5 Terraform state"
+  description               = "Redis from Module 5 search-api (added by Module 5's Terraform state)"
 }
 
 output "module5_service_sg_id" {

@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Faculty Research Profile — {{ faculty_email }} {{ academic_year }}</title>
+<style>
+    @page {
+        size: A4;
+        margin: 2cm 1.5cm;
+        @bottom-center {
+            content: "Page " counter(page) " of " counter(pages);
+            font-size: 9px;
+            color: #666;
+        }
+    }
+    body {
+        font-family: "DejaVu Sans", Arial, sans-serif;
+        font-size: 11px;
+        color: #1a1a1a;
+        line-height: 1.5;
+    }
+    .header {
+        border-bottom: 3px solid #6b2d5c;
+        padding-bottom: 10px;
+        margin-bottom: 20px;
+    }
+    .header h1 {
+        font-size: 18px;
+        color: #6b2d5c;
+        margin: 0 0 4px 0;
+    }
+    .header .subtitle {
+        font-size: 12px;
+        color: #555;
+        margin: 0;
+    }
+    .profile-card {
+        background: #faf5f8;
+        border: 1px solid #d9bdd0;
+        border-radius: 4px;
+        padding: 12px 16px;
+        margin-bottom: 20px;
+    }
+    .profile-card .field {
+        margin-bottom: 4px;
+        font-size: 10.5px;
+    }
+    .profile-card .field .label {
+        font-weight: bold;
+        color: #6b2d5c;
+        display: inline-block;
+        width: 130px;
+    }
+    .stats-row {
+        display: flex;
+        margin-bottom: 20px;
+    }
+    .stat-box {
+        display: inline-block;
+        text-align: center;
+        background: #f5eef2;
+        border-radius: 4px;
+        padding: 10px 20px;
+        margin-right: 12px;
+    }
+    .stat-box .value {
+        font-size: 18px;
+        font-weight: bold;
+        color: #6b2d5c;
+        display: block;
+    }
+    .stat-box .label {
+        font-size: 8.5px;
+        color: #777;
+        text-transform: uppercase;
+    }
+    table.papers {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 10px;
+    }
+    table.papers th {
+        background: #6b2d5c;
+        color: white;
+        text-align: left;
+        padding: 6px 8px;
+        font-size: 10px;
+    }
+    table.papers td {
+        padding: 6px 8px;
+        border-bottom: 1px solid #ddd;
+        vertical-align: top;
+        font-size: 9.5px;
+    }
+    table.papers tr:nth-child(even) {
+        background: #faf7f9;
+    }
+    .no-papers {
+        text-align: center;
+        padding: 40px;
+        color: #888;
+        font-style: italic;
+    }
+    .footer-note {
+        margin-top: 25px;
+        padding-top: 10px;
+        border-top: 1px solid #ccc;
+        font-size: 8.5px;
+        color: #888;
+    }
+</style>
+</head>
+<body>
+
+<div class="header">
+    <h1>Faculty Research Profile</h1>
+    <p class="subtitle">SRM University AP &mdash; Department of {{ department }}</p>
+</div>
+
+<div class="profile-card">
+    <div class="field"><span class="label">Faculty Email</span>{{ faculty_email }}</div>
+    <div class="field"><span class="label">Department</span>{{ department }}</div>
+    <div class="field"><span class="label">Academic Year</span>{{ academic_year }}</div>
+    <div class="field"><span class="label">Report Generated</span>{{ generated_at }}</div>
+</div>
+
+<div class="stats-row">
+    <div class="stat-box">
+        <span class="value">{{ total_papers }}</span>
+        <span class="label">Publications</span>
+    </div>
+    <div class="stat-box">
+        <span class="value">{{ journal_count }}</span>
+        <span class="label">Journals</span>
+    </div>
+    <div class="stat-box">
+        <span class="value">{{ conference_count }}</span>
+        <span class="label">Conferences</span>
+    </div>
+    <div class="stat-box">
+        <span class="value">{{ "%.2f"|format(avg_confidence) }}</span>
+        <span class="label">Avg. Confidence</span>
+    </div>
+</div>
+
+{% if papers %}
+<table class="papers">
+    <thead>
+        <tr>
+            <th style="width: 36%;">Title</th>
+            <th style="width: 22%;">Venue</th>
+            <th style="width: 8%;">Year</th>
+            <th style="width: 10%;">Type</th>
+            <th style="width: 16%;">DOI</th>
+            <th style="width: 8%;">Confidence</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for paper in papers %}
+        <tr>
+            <td>{{ paper.title }}</td>
+            <td>{{ paper.venue or "—" }}</td>
+            <td>{{ paper.year }}</td>
+            <td>{{ paper.paper_type | capitalize }}</td>
+            <td style="font-size: 8px;">{{ paper.doi or "—" }}</td>
+            <td>{{ "%.2f"|format(paper.overall_confidence) }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="no-papers">
+    No published papers found for this faculty member in academic year {{ academic_year }}.
+</div>
+{% endif %}
+
+<div class="footer-note">
+    This is a deterministically generated report. No AI/LLM processing was used to produce this
+    document &mdash; all data is sourced directly from verified, published records in the PromptFlow AI
+    database. A SHA-256 checksum of this file is stored alongside its metadata for tamper-proof
+    integrity verification. Generated by Module 6 (Report Generator), PromptFlow AI, SRM University AP.
+</div>
+
+</body>
+</html>

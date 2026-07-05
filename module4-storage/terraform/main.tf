@@ -38,6 +38,9 @@ data "aws_subnets" "private" {
     name   = "vpc-id"
     values = [data.aws_vpc.main.id]
   }
+  tags = {
+    Tier = "private"
+  }
 }
 
 # ── Shared KMS Key (encrypts RDS, Secrets Manager, ElastiCache, CloudWatch Logs) ──

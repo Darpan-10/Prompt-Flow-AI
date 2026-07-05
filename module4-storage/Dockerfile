@@ -27,9 +27,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # ── Pre-download the embedding model into the image ─────────────────────────
 # Avoids a HuggingFace Hub network call (and associated cold-start latency
 # or outage risk) every time a Fargate task starts cold.
-RUN python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='sentence-transformers/all-mpnet-base-v2', local_dir='/root/.cache/torch/sentence_transformers/sentence-transformers_all-mpnet-base-v2', local_dir_use_symlinks=False, ignore_patterns=['*.onnx', '*.onnx_data', 'onnx/*', 'openvino/*', 'openvino_model*', '*.bin', '*.xml'])"
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-mpnet-base-v2')"
-
 
 # App code
 COPY alembic.ini .
@@ -44,10 +42,6 @@ RUN mkdir -p /home/appuser/.cache && cp -r /root/.cache/* /home/appuser/.cache/ 
 RUN chown -R appuser:appuser /home/appuser/.cache
 ENV HF_HOME=/home/appuser/.cache/huggingface
 ENV SENTENCE_TRANSFORMERS_HOME=/home/appuser/.cache/torch/sentence_transformers
-
-ENV TRANSFORMERS_CACHE=/app/cache
-RUN mkdir -p /app/cache && chown -R appuser:appuser /app/cache
-
 USER appuser
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \

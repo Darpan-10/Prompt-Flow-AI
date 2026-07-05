@@ -1,0 +1,88 @@
+version: "3.9"
+
+# Module 6: NAAC Report Generator
+#
+# Like Module 5, this does NOT define its own Postgres -- Module 6 reads
+# AND writes to the SAME shared PostgreSQL Module 4 owns. Module 4's
+# docker-compose stack must already be running.
+#
+# UNLIKE Module 4/5, this file DOES define a local S3 emulator (MinIO),
+# since Module 6 actually needs to read/write real file bytes to
+# something S3-shaped for meaningful local end-to-end testing -- testing
+# report generation against real AWS S3 credentials isn't something
+# you'd want as the default local dev loop.
+#
+# Prerequisite:
+#   cd ../module4-storage && docker compose up -d postgres redis
+#
+# Then from THIS directory:
+#   docker compose up -d --build
+#
+# See SETUP.md for the full walkthrough.
+
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: m6_minio
+    command: server /data --console-address ":9101"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9100:9000" # S3 API
+      - "9101:9101" # Web console
+    volumes:
+      - m6_minio_data:/data
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - promptflow_shared_net
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: m6_minio_init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c " mc alias set local http://minio:9000 minioadmin minioadmin && mc mb --ignore-existing local/promptflow-reports-dev && echo 'Bucket promptflow-reports-dev ready' "
+    networks:
+      - promptflow_shared_net
+
+  reports-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: m6_reports_api
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://promptflow:secret@postgres:5432/promptflow
+      AWS_ENDPOINT_URL: http://minio:9000
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      S3_REPORTS_BUCKET: promptflow-reports-dev
+    ports:
+      - "8006:8006"
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    restart: on-failure
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8006/health" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - promptflow_shared_net
+
+volumes:
+  m6_minio_data:
+
+networks:
+  promptflow_shared_net:
+    external: true
+    name: promptflow_shared_net

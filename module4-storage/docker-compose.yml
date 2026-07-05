@@ -1,3 +1,5 @@
+version: "3.9"
+
 services:
 
   # ── PostgreSQL 15 with pgvector ──────────────────────────────────────────
@@ -72,7 +74,7 @@ services:
     ports:
       - "9093:9093"
     healthcheck:
-      test: [ "CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9093 || exit 1" ]
+      test: [ "CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:29092" ]
       interval: 10s
       timeout: 10s
       retries: 10
@@ -86,13 +88,19 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
-    command: >
-      bash -c "
+    command: |
+      bash -c '
         for topic in papers.validated papers.review papers.failed dlq.ingestion.failed; do
-          kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic $$topic --partitions 3 --replication-factor 1;
-        done;
-        echo 'All topics created.'
-      "
+          kafka-topics \
+            --bootstrap-server kafka:29092 \
+            --create \
+            --if-not-exists \
+            --topic "$$topic" \
+            --partitions 3 \
+            --replication-factor 1
+        done
+        echo "All topics created."
+      '
     networks:
       - m4_net
 
@@ -110,8 +118,6 @@ services:
       REDIS_URL: redis://:localdevtoken@redis:6379
     # Embedding model (sentence-transformers/all-mpnet-base-v2) needs
     # headroom beyond default Docker Desktop limits on some machines.
-    volumes:
-      - model_cache:/app/cache
     deploy:
       resources:
         limits:
@@ -124,8 +130,6 @@ services:
       kafka:
         condition: service_healthy
     restart: on-failure
-    healthcheck:
-      disable: true
     networks:
       - m4_net
 
@@ -141,10 +145,6 @@ services:
       DATABASE_URL: postgresql+asyncpg://promptflow:secret@postgres:5432/promptflow
       REDIS_URL: redis://:localdevtoken@redis:6379
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
-    volumes:
-      - model_cache:/app/cache
-      - ./tests:/app/tests
-      - ./migrations:/app/migrations
     ports:
       - "8003:8003"
     depends_on:
@@ -157,7 +157,6 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 60s
     restart: unless-stopped
     networks:
       - m4_net
@@ -165,8 +164,11 @@ services:
 volumes:
   m4_postgres_data:
   m4_redis_data:
-  model_cache:
 
 networks:
   m4_net:
     driver: bridge
+    name: promptflow_shared_net
+      # fixed name so Module 5 (or others) can join
+      # via 'external: true' regardless of which
+      # directory this compose project lives in

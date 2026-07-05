@@ -81,18 +81,16 @@ resource "aws_iam_role_policy_attachment" "rds_enhanced_monitoring" {
 # ── RDS Instance ───────────────────────────────────────────────────────────────
 
 resource "aws_db_instance" "promptflow" {
-  identifier = "promptflow-${var.environment}"
-
+  identifier     = "promptflow-${var.environment}"
   engine         = "postgres"
-  engine_version = "15"
+  engine_version = "15.7"
 
-  instance_class        = "db.t3.micro"
-  allocated_storage     = 20
-  max_allocated_storage = 20
-
-  storage_type      = "gp3"
-  storage_encrypted = true
-  kms_key_id        = var.kms_key_arn
+  instance_class        = var.db_instance_class
+  allocated_storage     = var.allocated_storage
+  max_allocated_storage = var.max_allocated_storage
+  storage_type          = "gp3"
+  storage_encrypted     = true
+  kms_key_id            = var.kms_key_arn
 
   db_name  = "promptflow"
   username = "promptflow"
@@ -103,22 +101,44 @@ resource "aws_db_instance" "promptflow" {
   vpc_security_group_ids = [var.security_group_id]
   parameter_group_name   = aws_db_parameter_group.promptflow_pg15.name
 
-  multi_az            = false
+  # CKV_AWS_157 / CKV_AWS_293: Multi-AZ and deletion protection are
+  # intentionally environment-conditional -- enabled in prod, disabled in
+  # dev/staging so the database can be torn down cheaply and quickly
+  # during active development. This is a deliberate cost/safety trade-off,
+  # not an oversight; checkov's static analysis can't evaluate the
+  # ternary against a specific environment value, so these two checks
+  # will always show as "failed" when scanning the raw HCL regardless of
+  # which environment you actually deploy.
+  #checkov:skip=CKV_AWS_157:Multi-AZ is enabled for environment=prod via ternary; disabled in dev/staging intentionally for cost and fast teardown
+  #checkov:skip=CKV_AWS_293:Deletion protection is enabled for environment=prod via ternary; disabled in dev/staging intentionally so `terraform destroy` works without manual intervention
+  multi_az            = var.environment == "prod" ? true : false
   publicly_accessible = false
 
-  # Free Tier settings
-  backup_retention_period = 0
-  deletion_protection     = false
-  skip_final_snapshot     = true
+  backup_retention_period = var.environment == "prod" ? 30 : 7
+  backup_window            = "03:00-04:00"
+  maintenance_window       = "mon:04:00-mon:05:00"
 
-  # Disable paid/advanced features
-  monitoring_interval                 = 0
-  performance_insights_enabled        = false
-  iam_database_authentication_enabled = false
+  deletion_protection      = var.environment == "prod" ? true : false
+  skip_final_snapshot      = var.environment != "prod"
+  final_snapshot_identifier = var.environment == "prod" ? "promptflow-final-${formatdate("YYYY-MM-DD", timestamp())}" : null
 
+  # CKV_AWS_118: enhanced monitoring at 60s granularity
+  monitoring_interval = 60
+  monitoring_role_arn = aws_iam_role.rds_enhanced_monitoring.arn
+
+  # CKV_AWS_354: Performance Insights encrypted with the shared CMK
+  performance_insights_enabled          = true
+  performance_insights_retention_period = 7
+  performance_insights_kms_key_id       = var.kms_key_arn
+
+  # CKV_AWS_161: allow IAM-based DB authentication as an alternative to
+  # password auth (does not disable password auth -- additive capability)
+  iam_database_authentication_enabled = true
+
+  # CKV_AWS_226: automatically apply minor version patches (security fixes)
   auto_minor_version_upgrade = true
 
-  enabled_cloudwatch_logs_exports = []
+  enabled_cloudwatch_logs_exports = ["postgresql", "upgrade"]
 
   copy_tags_to_snapshot = true
 
@@ -126,8 +146,10 @@ resource "aws_db_instance" "promptflow" {
     Name        = "promptflow-${var.environment}"
     Environment = var.environment
     Module      = "Module4_Storage"
+    Compliance  = "NAAC-7yr-retention"
   }
 }
+
 # ── Secrets Manager (DB credentials) ──────────────────────────────────────────
 
 resource "aws_secretsmanager_secret" "db_credentials" {

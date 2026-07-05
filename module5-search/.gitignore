@@ -3,6 +3,11 @@
 .env.*
 !.env.example
 
+# Keys — NEVER commit private keys
+keys/
+*.pem
+*.key
+
 # Python
 __pycache__/
 *.pyc

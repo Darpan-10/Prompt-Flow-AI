@@ -15,10 +15,26 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # ── App ──────────────────────────────────────────────────────────
+    # -- App ------------------------------------------------------------
     APP_ENV: str = "development"
     LOG_LEVEL: str = "INFO"
     WORKER_ID: str = "module4-worker-1"
+
+    # -- Auth headers (trust boundary) -----------------------------------
+    # Module 4 does not parse JWTs itself -- it trusts X-Department-Code /
+    # X-Role / X-User-Id headers injected by an upstream authenticated
+    # gateway (Module 1), the same architectural pattern used elsewhere
+    # in this system for service-to-service trust. What changed (see
+    # CRITICAL_PATCH_NOTES.md): those headers are now REQUIRED -- a
+    # request missing any of them is rejected with 401, rather than
+    # silently defaulting to full admin/RLS-bypass access, which is what
+    # the old code did.
+    #
+    # ALLOW_MISSING_AUTH_HEADERS=true is a LOCAL-DEV-ONLY escape hatch
+    # (mirrors Module 5/6's SKIP_JWT_VALIDATION) so you can curl this
+    # service directly without a gateway in front of it. It MUST be
+    # false in any deployed environment.
+    ALLOW_MISSING_AUTH_HEADERS: bool = False
 
     # ── Database ─────────────────────────────────────────────────────
     DATABASE_URL: str = "postgresql+asyncpg://promptflow:secret@localhost:5433/promptflow"

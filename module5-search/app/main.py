@@ -4,12 +4,12 @@ FastAPI app with lifespan management: warms up the embedding model and
 starts the Redis pub/sub invalidation listener as a background task.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
-# pyrefly: ignore [missing-import]
 from fastapi import FastAPI
 
 from app.config import settings
@@ -17,8 +17,6 @@ from app.database import dispose_engine
 from app.routes import health, search
 from app.services import redis_service
 from app.services.embedding_service import warm_up
-# pyrefly: ignore [missing-import]
-from sentence_transformers import SentenceTransformer
 
 logging.basicConfig(
     level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO),
@@ -30,20 +28,14 @@ _invalidation_listener_task: asyncio.Task | None = None
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator:
-    log.info("Module 4 Storage API starting up...")
-    # Load embedding model at startup to fail early if download fails
-    log.info("Loading embedding model...")
-    try:
-        app.state.model = SentenceTransformer('all-mpnet-base-v2')
-        log.info("Embedding model loaded successfully")
-    except Exception as e:
-        log.error(f"Failed to load embedding model: {e}")
-        raise
+async def lifespan(app: FastAPI):
+    # ── Startup ──────────────────────────────────────────────────────────
+    log.info("Module 5 Search service starting...")
 
-    yield
-
-    log.info("Module 4 Storage API shutting down...")
+    log.info("Warming up embedding model (sentence-transformers/all-mpnet-base-v2)...")
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, warm_up)
+    log.info("Embedding model ready.")
 
     global _invalidation_listener_task
     _invalidation_listener_task = asyncio.create_task(
