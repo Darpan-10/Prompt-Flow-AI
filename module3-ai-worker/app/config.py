@@ -40,10 +40,15 @@ class Settings(BaseSettings):
     crossref_timeout_seconds: int = 10
     crossref_mailto: str = "promptflow@srmap.edu.in"
 
-    # Directory / Faculty API
-    directory_api_url: str = "http://localhost:8080"
+    # Directory / Faculty API — served by Module 1 (module1-auth/app/routes/directory.py)
+    directory_api_url: str = "http://localhost:8000"
     directory_timeout_seconds: int = 3
     directory_max_retries: int = 2
+
+    # Module 1 — issues the M2M token used to call the directory API
+    auth_service_url: str = "http://localhost:8000"
+    m2m_client_id: str = "module3-ai-worker"
+    m2m_client_secret: str = ""
 
     # Routing thresholds
     default_confidence_threshold: float = 0.75

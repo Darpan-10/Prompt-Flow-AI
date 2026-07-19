@@ -24,4 +24,4 @@ Thumbs.db
 .idea/
 docker-compose.yml
 db/
-scripts/
+#scripts/

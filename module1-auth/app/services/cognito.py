@@ -10,6 +10,8 @@ import httpx
 import base64
 from typing import Optional
 from app.config import settings
+from app.services.service_accounts import verify_secret
+from app import state
 
 
 def get_cognito_base_url() -> str:
@@ -80,9 +82,21 @@ async def revoke_token(refresh_token: str) -> bool:
 
 async def verify_m2m_client(client_id: str, client_secret: str) -> bool:
     """
-    Validate M2M client credentials via Cognito client_credentials grant.
-    Returns True if valid.
+    Validate M2M client credentials.
+
+    Production: Cognito client_credentials grant, as before.
+
+    Non-production: checks the local service_accounts table instead.
+    This table existed in schema.sql with no code ever reading it and
+    no column to even store a validatable secret — meaning M2M auth
+    (and everything that depends on it, like Module 3's directory
+    lookups) could never actually succeed without live AWS Cognito
+    configured, even for local Docker testing. Real credential
+    validation still happens either way; this just chooses where.
     """
+    if settings.app_env != "production":
+        return await _verify_local_service_account(client_id, client_secret)
+
     token_url = f"{get_cognito_base_url()}/oauth2/token"
     credentials = base64.b64encode(
         f"{client_id}:{client_secret}".encode()
@@ -101,3 +115,14 @@ async def verify_m2m_client(client_id: str, client_secret: str) -> bool:
             },
         )
         return resp.status_code == 200
+
+
+async def _verify_local_service_account(client_id: str, client_secret: str) -> bool:
+    async with state.db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT client_secret_hash FROM service_accounts WHERE client_id = $1 AND is_active = true",
+            client_id,
+        )
+    if row is None or not row["client_secret_hash"]:
+        return False
+    return verify_secret(client_secret, row["client_secret_hash"])

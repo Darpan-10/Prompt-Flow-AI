@@ -167,7 +167,7 @@ volumes:
 
 networks:
   m4_net:
-    driver: bridge
+    external: true
     name: promptflow_shared_net
       # fixed name so Module 5 (or others) can join
       # via 'external: true' regardless of which

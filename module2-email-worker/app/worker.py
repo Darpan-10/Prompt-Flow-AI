@@ -34,6 +34,7 @@ from app.services.clamav import scan_bytes, ScanResult
 from app.services.s3_uploader import upload_attachment, quarantine_file
 from app.services.redis_dedup import is_duplicate, mark_processed
 from app.services.kafka_producer import publish_event
+from app.services.audit import log_audit
 from app.utils.hashing import (
     compute_file_checksum,
     compute_text_hash,
@@ -85,6 +86,12 @@ def process_single_email(raw_msg: dict, gmail_service) -> bool:
         logger.warning(
             "DOMAIN REJECTED: sender '%s' is not @%s — skipping",
             parsed.sender, ALLOWED_DOMAIN,
+        )
+        log_audit(
+            action="EMAIL_DOMAIN_REJECTED",
+            resource_type="ingestion",
+            resource_id=parsed.message_id,
+            details={"sender": parsed.sender},
         )
         mark_message_read(gmail_service, raw_msg["id"])
         return False
@@ -160,6 +167,15 @@ def process_single_email(raw_msg: dict, gmail_service) -> bool:
             logger.warning(
                 "Attachment quarantined — NOT publishing to Kafka: %s",
                 parsed.message_id,
+            )
+            log_audit(
+                action="ATTACHMENT_QUARANTINED",
+                resource_type="ingestion",
+                resource_id=parsed.message_id,
+                details={
+                    "filename": filename,
+                    "reason": scan.virus_name or scan.error_message or "scan_failed",
+                },
             )
             # Per policy: do NOT publish to Kafka if any attachment is infected
             return False
@@ -242,6 +258,12 @@ def process_single_email(raw_msg: dict, gmail_service) -> bool:
     logger.info(
         "✅ Successfully ingested: %s | key: %s | attachments: %d",
         parsed.message_id, idempotency_key, len(attachment_infos),
+    )
+    log_audit(
+        action="EMAIL_INGESTED",
+        resource_type="ingestion",
+        resource_id=parsed.message_id,
+        details={"idempotency_key": idempotency_key, "attachment_count": len(attachment_infos)},
     )
     return True
 

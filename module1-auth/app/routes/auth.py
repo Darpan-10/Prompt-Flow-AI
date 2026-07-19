@@ -9,6 +9,7 @@ Flow:
   GET  /auth/me        → current user info
 """
 import uuid
+from typing import Optional
 from fastapi import APIRouter, HTTPException, Request, Response, Depends
 from fastapi.responses import RedirectResponse, JSONResponse
 
@@ -17,7 +18,7 @@ from app.services import cognito as cognito_svc
 from app.services.audit import log_audit
 from app.services.jwt_service import create_access_token, verify_token
 from app.models.jwt import Role, AuthType, get_permissions, UserInfo
-from app.models.audit import AuditAction
+from app.models.audit import AuditAction, ResourceType
 from app.dependencies import get_current_user
 from app import state
 import jwt as pyjwt
@@ -25,6 +26,36 @@ import jwt as pyjwt
 router = APIRouter()
 
 REDIRECT_URI = "https://api.promptflow.ai/auth/callback"  # update per env
+
+
+async def _lookup_provisioned_user(email: str) -> Optional[dict]:
+    """
+    Look up a user by email in Module 1's own users table.
+
+    NAAC compliance requires accounts to be admin-provisioned, never
+    auto-minted on login (see app/routes/users.py POST /). This means
+    login can no longer trust Cognito's custom:role / custom:department_code
+    attributes as authorization data — Cognito only verifies the person's
+    identity (their email); role/department/faculty_id must come from the
+    row an admin already created for them.
+
+    Runs with an admin-context connection since, at this point in the
+    flow, we don't yet know the caller's own department to satisfy the
+    normal users_dept_isolation RLS policy — this is an internal system
+    lookup by email, not a client request scoped to an authenticated user.
+    """
+    async with state.db_pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute("SELECT set_config('app.current_role', 'admin', true)")
+            row = await conn.fetchrow(
+                """
+                SELECT user_id, faculty_id, email, name, role, department_code, is_active
+                FROM users
+                WHERE email = $1
+                """,
+                email,
+            )
+    return dict(row) if row else None
 
 
 @router.get("/login")
@@ -82,27 +113,54 @@ async def auth_callback(request: Request, code: str, state: str):
             action=AuditAction.LOGIN_FAILED,
             actor_type="user",
             actor_id=user_info.get("sub"),
+            resource_type=ResourceType.AUTH_SESSION,
             details={"reason": "domain_not_allowed", "email": email},
             request=request,
         )
         raise HTTPException(status_code=403, detail="domain_not_allowed")
 
-    # Map Cognito custom attributes to internal role
-    role_str = user_info.get("custom:role", "faculty")
-    try:
-        role = Role(role_str)
-    except ValueError:
-        role = Role.faculty
+    # Resolve role/department/faculty_id from Module 1's own users table —
+    # never from Cognito custom attributes. Cognito only proves who the
+    # person is (their verified email); it says nothing about whether an
+    # admin has actually provisioned them, which role they hold today, or
+    # their department. Trusting custom:role would let anyone who can
+    # authenticate mint themselves any role by setting their own Cognito
+    # attribute — the exact auto-mint-on-login gap NAAC provisioning rules
+    # exist to close.
+    provisioned = await _lookup_provisioned_user(email)
+    if provisioned is None:
+        await log_audit(
+            action=AuditAction.LOGIN_FAILED,
+            actor_type="user",
+            actor_id=user_info.get("sub"),
+            resource_type=ResourceType.AUTH_SESSION,
+            details={"reason": "user_not_provisioned", "email": email},
+            request=request,
+        )
+        raise HTTPException(status_code=403, detail="user_not_provisioned")
 
-    dept_code = user_info.get("custom:department_code")
+    if not provisioned["is_active"]:
+        await log_audit(
+            action=AuditAction.LOGIN_FAILED,
+            actor_type="user",
+            actor_id=provisioned["user_id"],
+            resource_type=ResourceType.AUTH_SESSION,
+            details={"reason": "account_deactivated", "email": email},
+            request=request,
+        )
+        raise HTTPException(status_code=403, detail="account_deactivated")
+
+    role = Role(provisioned["role"])
+    dept_code = provisioned["department_code"]
 
     # Issue internal JWT
     access_token = create_access_token(
-        sub=user_info["sub"],
+        sub=provisioned["user_id"],
         email=email,
-        name=user_info.get("name", email.split("@")[0]),
+        name=provisioned["name"] or user_info.get("name", email.split("@")[0]),
         role=role,
         department_code=dept_code,
+        faculty_id=str(provisioned["faculty_id"]),
         auth_type=AuthType.user,
         trace_id=request.headers.get("x-trace-id"),
     )
@@ -110,7 +168,8 @@ async def auth_callback(request: Request, code: str, state: str):
     await log_audit(
         action=AuditAction.LOGIN_SUCCESS,
         actor_type="user",
-        actor_id=user_info["sub"],
+        actor_id=provisioned["user_id"],
+        resource_type=ResourceType.AUTH_SESSION,
         details={"email": email, "dept": dept_code, "role": role.value},
         request=request,
     )
@@ -160,18 +219,31 @@ async def refresh_token(request: Request):
 
     new_tokens = resp.json()
     user_info = await cognito_svc.get_user_info(new_tokens["access_token"])
-    role = Role(user_info.get("custom:role", "faculty"))
+    email = user_info["email"]
+
+    provisioned = await _lookup_provisioned_user(email)
+    if provisioned is None or not provisioned["is_active"]:
+        raise HTTPException(status_code=403, detail="user_not_provisioned")
+
+    role = Role(provisioned["role"])
 
     access_token = create_access_token(
-        sub=user_info["sub"],
-        email=user_info["email"],
-        name=user_info.get("name", ""),
+        sub=provisioned["user_id"],
+        email=email,
+        name=provisioned["name"] or user_info.get("name", ""),
         role=role,
-        department_code=user_info.get("custom:department_code"),
+        department_code=provisioned["department_code"],
+        faculty_id=str(provisioned["faculty_id"]),
         trace_id=request.headers.get("x-trace-id"),
     )
 
-    await log_audit(AuditAction.TOKEN_REFRESHED, "user", user_info["sub"], request=request)
+    await log_audit(
+        AuditAction.TOKEN_REFRESHED,
+        "user",
+        provisioned["user_id"],
+        resource_type=ResourceType.AUTH_SESSION,
+        request=request,
+    )
 
     return {"access_token": access_token, "token_type": "Bearer", "expires_in": 900}
 
@@ -191,7 +263,13 @@ async def logout(request: Request, claims: dict = Depends(get_current_user)):
     if refresh_tok:
         await cognito_svc.revoke_token(refresh_tok)
 
-    await log_audit(AuditAction.LOGOUT, "user", claims["sub"], request=request)
+    await log_audit(
+        AuditAction.LOGOUT,
+        "user",
+        claims["sub"],
+        resource_type=ResourceType.AUTH_SESSION,
+        request=request,
+    )
 
     response = JSONResponse(content={"message": "Logged out successfully"})
     response.delete_cookie("refresh_token")
@@ -208,4 +286,5 @@ async def me(claims: dict = Depends(get_current_user)):
         role=Role(claims["role"]),
         department_code=claims.get("department_code"),
         permissions=claims.get("permissions", []),
+        faculty_id=claims.get("faculty_id"),
     )

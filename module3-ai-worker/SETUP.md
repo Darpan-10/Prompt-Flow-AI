@@ -1,282 +1,348 @@
-# Module 3: AI Extraction Worker — Setup Guide (Arch Linux)
+# Module 3: AI Extraction Worker — Setup Guide
 
-## 🗂️ File Structure
-```
-module3-ai-worker/
-├── app/
-│   ├── main.py                        # FastAPI + worker thread
-│   ├── config.py                      # Pydantic settings
-│   ├── pipeline.py                    # 11-step pipeline orchestrator
-│   ├── models/
-│   │   └── schemas.py                 # IngestedPayload + PaperExtractedV1
-│   ├── services/
-│   │   ├── verification.py            # SHA256 dual integrity check
-│   │   ├── kafka_client.py            # Consumer + producer
-│   │   ├── idempotency.py             # Redis dedup guard
-│   │   └── extraction/
-│   │       ├── cascade.py             # 4-tier orchestrator
-│   │       ├── tier1_regex.py         # DOI + Year regex (conf=0.95)
-│   │       ├── tier2_crossref.py      # CrossRef API (conf=1.0)
-│   │       ├── tier3_nlp.py           # spaCy NLP (conf=0.75)
-│   │       └── tier4_bedrock.py       # AWS Bedrock LLM (cap=0.90)
-│   ├── services/directory/
-│   │   └── service.py                 # DirectoryService adapter + HTTP impl
-│   └── routing/
-│       └── engine.py                  # Deterministic routing engine
-├── mock_directory/
-│   ├── main.py                        # FastAPI mock on port 8080
-│   └── Dockerfile
-├── terraform/                         # AWS infrastructure
-│   ├── main.tf / variables.tf / outputs.tf
-│   └── modules/{vpc,rds,s3,msk,elasticache,cognito,iam,secrets}/
-├── tests/
-│   └── test_module3.py               # Full validation suite
-├── requirements.txt
-├── .env.example
-├── Dockerfile
-└── docker-compose.yml
-```
+Two paths:
+
+- **Path A — Native (venv + shared infra via Docker)**
+- **Path B — Fully Dockerized**
 
 ---
 
-## ⚙️ STEP 1 — Install System Dependencies (Arch Linux)
+## 0. Prerequisites
 
-```bash
-sudo pacman -S python python-pip docker docker-compose
-sudo systemctl start docker && sudo systemctl enable docker
-sudo usermod -aG docker $USER && newgrp docker
-```
+| Tool | Version | Check with |
+|---|---|---|
+| Python | 3.11.x | `python3 --version` |
+| Docker | 24+ | `docker --version` |
+| Docker Compose | v2 | `docker compose version` |
 
 ---
 
-## ⚙️ STEP 2 — Project Setup
+## 1. Unzip
 
 ```bash
 unzip module3-ai-worker.zip
 cd module3-ai-worker
-
-python3.12 -m venv venv
-source venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
-
-# Download spaCy NLP model (required for Tier 3)
-python -m spacy download en_core_web_sm
 ```
 
 ---
 
-## ⚙️ STEP 3 — Configure .env
+# PATH A — Native Python
+
+## A.1 — Virtual environment
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
+
+## A.2 — Install dependencies
+
+```bash
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+Takes 2-3 minutes (spaCy + its dependencies are the bulk of it).
+
+## A.3 — Download the spaCy NLP model (one-time, ~15MB)
+
+```bash
+python -m spacy download en_core_web_sm
+```
+
+Verify:
+```bash
+python -c "import spacy; spacy.load('en_core_web_sm'); print('spaCy model OK')"
+```
+
+## A.4 — Create `.env`
 
 ```bash
 cp .env.example .env
-nano .env
 ```
 
-**Required values:**
+The defaults already point at **Module 4's shared infra** on its
+host-exposed ports:
+
 ```env
-# Kafka — matches Module 2 topics
 KAFKA_BOOTSTRAP_SERVERS=localhost:9093
-
-# Redis
 REDIS_URL=redis://:localdevtoken@localhost:6380
+DATABASE_URL=postgresql://promptflow:secret@localhost:5433/promptflow
+```
 
-# AWS credentials (for Bedrock + S3)
-AWS_REGION=ap-south-1
+These are deliberately NOT the usual defaults (9092/6379/5432) — Module 4
+maps to 9093/6380/5433 on the host specifically so it doesn't clash with
+Module 1's own separate Postgres/Redis (5432/6379).
 
-# Directory API (docker-compose provides this)
+For the directory API, decide real vs mock (see section 3 below) and set
+`DIRECTORY_API_URL` + `M2M_CLIENT_SECRET` accordingly.
+
+## A.5 — Create the shared network (one-time, system-wide)
+
+```bash
+docker network create promptflow_shared_net || true
+```
+
+## A.6 — Start Module 4's shared infra + its own topics
+
+```bash
+cd ../module4-storage
+docker compose up -d postgres redis zookeeper kafka
+docker compose ps   # wait for all healthy, ~30 sec
+docker compose up kafka-init
+cd ../module3-ai-worker
+```
+
+## A.7 — Ensure Module 2's topic exists
+
+Module 3 consumes `ingest.raw`, which Module 4's `kafka-init` doesn't
+create (it only creates topics Module 4 itself consumes). Module 2 owns
+creating it:
+
+```bash
+cd ../module2-email-worker
+docker compose up kafka-init
+cd ../module3-ai-worker
+```
+
+Confirm all topics exist:
+```bash
+docker exec m4_kafka kafka-topics --bootstrap-server localhost:29092 --list
+```
+Expect: `ingest.raw`, `papers.validated`, `papers.review`, `papers.failed`,
+`dlq.ingestion.failed`.
+
+## A.8 — Set up the directory API
+
+**Option 1 — Real (Module 1, returns actual faculty_id UUIDs):**
+```bash
+cd ../module1-auth
+docker compose up -d
+python scripts/create_service_account.py module3-ai-worker "Module 3 AI Worker"
+# copy the printed secret
+cd ../module3-ai-worker
+```
+Then in `.env`:
+```env
+DIRECTORY_API_URL=http://localhost:8000
+AUTH_SERVICE_URL=http://localhost:8000
+M2M_CLIENT_SECRET=<paste secret>
+```
+
+**Option 2 — Mock (isolated testing, no Module 1 needed, no real UUIDs):**
+```bash
+docker compose up -d mock-directory
+```
+Then in `.env`:
+```env
 DIRECTORY_API_URL=http://localhost:8080
 ```
+(Leave `M2M_CLIENT_SECRET` blank — the mock doesn't check auth at all.)
 
----
-
-## ⚙️ STEP 4 — Configure AWS Credentials (for Bedrock)
-
-```bash
-aws configure
-# Region: ap-south-1
-# Access Key + Secret Key from your AWS console
-
-# Verify Bedrock access
-aws bedrock list-foundation-models --region ap-south-1 | grep haiku
-```
-
----
-
-## ⚙️ STEP 5 — Start Infrastructure (Docker)
+## A.9 — Run the test suite
 
 ```bash
-# Start all services (Kafka, Redis, PostgreSQL, Mock Directory)
-docker-compose up -d zookeeper kafka redis postgres mock-directory
-
-# Wait for Kafka to be healthy (~30 sec)
-docker-compose ps
-
-# Create all Kafka topics
-docker-compose up kafka-init
-
-# Verify topics
-docker exec m3_kafka kafka-topics --bootstrap-server localhost:9093 --list
-# Should show: ingest.raw, papers.validated, papers.review, papers.failed, dlq.ingestion.failed
+pytest tests/test_module3.py -q --asyncio-mode=auto
 ```
 
----
+Expected: **22 passed**. Unit tests for the confidence formula, routing
+engine, and each extraction tier — no live Kafka/Postgres/directory
+needed.
 
-## ⚙️ STEP 6 — Run Tests
+## A.10 — Start the worker
 
 ```bash
-source venv/bin/activate
-pytest tests/test_module3.py -v
-
-# Expected: all PASSED
-# Tests cover:
-#   ✅ Routing logic (AUTO_SAVE, REVIEW, BLOCK)
-#   ✅ Confidence formula
-#   ✅ DOI regex
-#   ✅ Bedrock gate + confidence cap
-#   ✅ Schema validation
-#   ✅ Hash verification
+python -m app.pipeline
 ```
 
----
-
-## ⚙️ STEP 7 — Run the Worker
-
-```bash
-# Option A: Local (no Docker)
-source venv/bin/activate
-uvicorn app.main:app --host 0.0.0.0 --port 8002 --reload
-
-# Option B: Docker
-docker-compose up worker
+Expected startup log:
+```
+Module 3 worker starting | consumer_group=module3-ai-extraction | topics=['ingest.raw']
 ```
 
-Health check:
+## A.11 — Smoke test
+
 ```bash
 curl http://localhost:8002/health
-curl http://localhost:8002/ready
+```
+
+## A.12 — Stopping everything
+
+```bash
+# Ctrl+C in the worker terminal
+docker compose down                            # stops mock-directory if used
+cd ../module4-storage && docker compose down   # stops shared infra
+cd ../module1-auth && docker compose down      # if you started it for A.8
 ```
 
 ---
 
-## ⚙️ STEP 8 — Test Directory API
+# PATH B — Fully Dockerized
+
+## B.1 — Shared network
 
 ```bash
-# Active faculty
-curl http://localhost:8080/api/faculty/dr.smith
-# {"faculty_name":"Dr. John Smith","faculty_email":"dr.smith@srmap.edu.in","department_code":"CSE","faculty_status":"active"}
+docker network create promptflow_shared_net || true
+```
 
-# Inactive faculty
-curl http://localhost:8080/api/faculty/dr.inactive
-# {"faculty_status":"inactive",...}
+## B.2 — Start Module 4's shared infra + topics
 
-# Not found
-curl http://localhost:8080/api/faculty/unknown_xyz
-# 404
+```bash
+cd ../module4-storage
+docker compose up -d postgres redis zookeeper kafka
+docker compose up kafka-init
+cd ../module2-email-worker
+docker compose up kafka-init   # creates ingest.raw
+cd ../module3-ai-worker
+```
+
+## B.3 — Set up the directory API (real, recommended for integration testing)
+
+```bash
+cd ../module1-auth
+docker compose up -d
+python scripts/create_service_account.py module3-ai-worker "Module 3 AI Worker"
+cd ../module3-ai-worker
+```
+
+Copy the printed secret.
+
+## B.4 — Configure `.env`
+
+```bash
+cp .env.example .env
+```
+
+Edit and set:
+```env
+M2M_CLIENT_SECRET=<paste secret from B.3>
+```
+
+`docker-compose.yml`'s `worker` service already overrides
+`KAFKA_BOOTSTRAP_SERVERS`/`REDIS_URL`/`DATABASE_URL`/`DIRECTORY_API_URL`/
+`AUTH_SERVICE_URL` to the internal container hostnames — only
+`M2M_CLIENT_SECRET` needs to come from your `.env` (it's substituted into
+`docker-compose.yml` via `${M2M_CLIENT_SECRET}`).
+
+## B.5 — Build and start
+
+```bash
+docker compose build --no-cache
+docker compose up -d worker
+docker compose ps
+```
+
+## B.6 — Check logs
+
+```bash
+docker compose logs -f worker
+```
+
+## B.7 — Smoke test
+
+```bash
+docker compose exec worker curl -f http://localhost:8002/health
+```
+
+## B.8 — Run tests inside the container
+
+```bash
+docker compose exec worker pytest tests/test_module3.py -q --asyncio-mode=auto
+```
+
+## B.9 — Stopping everything
+
+```bash
+docker compose down
+cd ../module2-email-worker && docker compose down
+cd ../module4-storage && docker compose down
+cd ../module1-auth && docker compose down
 ```
 
 ---
 
-## ⚙️ STEP 9 — Inject a Test Message to Kafka
+## 3. Directory API: real vs mock
+
+| | Real (Module 1) | Mock (`mock_directory/`) |
+|---|---|---|
+| Returns a real `faculty_id` UUID | Yes | No — never returns one at all |
+| Needs Module 1 running | Yes | No |
+| Needs M2M auth | Yes | No (unauthenticated) |
+| Good for | Full end-to-end integration testing against Module 4 | Exercising the extraction cascade in isolation |
+
+If you use the mock, every paper resolves to Module 4's "unresolved
+faculty" sentinel UUID (`00000000-0000-0000-0000-000000000000`) rather
+than a real user — fine for checking extraction logic, not for a real
+end-to-end test through Module 4.
+
+---
+
+## 4. Testing the pipeline manually
+
+Inject a synthetic message straight into `ingest.raw` without waiting on
+a real email from Module 2:
 
 ```bash
-# Publish a test paper.ingested.v1 event to ingest.raw
-python3 scripts/inject_test_message.py
+python3 scripts/inject_test_message.py --server localhost:9093
 ```
 
-Or manually:
-```bash
-echo '{"event_id":"test-001","contract_version":"v1","pipeline_status":"ingested","created_at":"2026-06-10T13:00:00Z","email":{"message_id":"<test@srmap.edu.in>","subject":"Research Paper","sender":"dr.smith@srmap.edu.in","recipients":["papers@srmap.edu.in"],"received_at":"2026-06-10T13:00:00Z","idempotency_key":"abc123"},"content":{"raw_text":"This paper presents a novel approach to deep learning. DOI: 10.1145/3290605.3300501. Authors: John Smith, Jane Doe. Published in ACM SIGCHI Conference on Human Factors in Computing Systems 2023. The study demonstrates significant improvements over baseline methods in multiple benchmark datasets with extensive experimental validation.","raw_text_hash":"REPLACE_WITH_ACTUAL_HASH","attachments":[]},"security":{"pii_redacted":true,"source_domain_verified":true,"clamav_scanned":true,"clamav_result":"CLEAN"}}' | \
-docker exec -i m3_kafka kafka-console-producer \
-  --bootstrap-server localhost:29092 \
-  --topic ingest.raw \
-  --property "key.serializer=org.apache.kafka.common.serialization.StringSerializer"
-```
+(`--server localhost:9093` matters if you're running this script from
+your host, i.e. Path A — the script's own default already matches this,
+but it's worth being explicit. If running it from inside a container on
+`promptflow_shared_net`, use `--server kafka:29092` instead.)
 
-Watch output:
+Watch the worker process it:
 ```bash
-docker exec m3_kafka kafka-console-consumer \
-  --bootstrap-server localhost:29092 \
-  --topic papers.validated \
-  --from-beginning
+docker exec m4_kafka kafka-console-consumer --bootstrap-server localhost:29092 \
+  --topic papers.validated --from-beginning --max-messages 1
 ```
 
 ---
 
-## ⚙️ STEP 10 — AWS Terraform Deployment
+## 5. Common problems and fixes
 
-```bash
-cd terraform/
+**`Connection refused` on Kafka from a native (Path A) process**
+Check `.env` — `9092` isn't mapped to the host at all. Module 4 only
+exposes `9093` (its `PLAINTEXT_HOST` listener). `9093` should already be
+correct in `.env.example`; if you changed it, change it back.
 
-# One-time: bootstrap state backend (skip if already done for Module 2)
-# aws s3api create-bucket --bucket promptflow-terraform-state-ap --region ap-south-1
+**Directory lookups always time out / 401**
+- Using the real directory: confirm Module 1 is up
+  (`docker compose ps` in `module1-auth/`) and `M2M_CLIENT_SECRET` in
+  `.env` matches what `create_service_account.py` printed.
+- Using the mock: confirm `docker compose ps mock-directory` shows
+  healthy, and `DIRECTORY_API_URL=http://localhost:8080` in `.env`.
 
-terraform init
+**Every paper's `faculty_id` is `00000000-0000-0000-0000-000000000000`**
+This is the mock directory's expected behavior (it never returns a real
+UUID) — not a bug. Switch to the real directory (section 3) if you need
+actual faculty resolution.
 
-# Plan
-terraform plan \
-  -var-file=dev.tfvars \
-  -var="db_password=$DB_PASSWORD" \
-  -var="redis_auth_token=$(openssl rand -hex 32)"
+**`kafka-topics`/`kafka-console-consumer` says "command not found" inside a container**
+Run it against `m4_kafka` (has the Kafka CLI tools), not
+`m3_ai_extraction_worker` (a plain Python image, no Kafka CLI tools).
 
-# Apply
-terraform apply \
-  -var-file=dev.tfvars \
-  -var="db_password=$DB_PASSWORD" \
-  -var="redis_auth_token=$(openssl rand -hex 32)" \
-  -auto-approve
+**Worker logs show repeated retries for the same message**
+By design — the consumer only commits a Kafka offset after successfully
+publishing its output, so a malformed message retries indefinitely
+rather than silently dropping data. Check the full traceback; this
+usually means either the directory API is unreachable (see above) or a
+genuinely malformed `ingest.raw` payload (compare against
+`app/models/schemas.py`'s `IngestedPayload`).
 
-# After apply — create MSK topics
-BOOTSTRAP=$(terraform output -raw kafka_bootstrap_brokers)
-../scripts/create_topics.sh "$BOOTSTRAP"
-
-# Destroy
-terraform destroy -var-file=dev.tfvars
-```
-
----
-
-## 🔐 Security Checklist
-
-✅ Cryptographic verification: SHA256 of file bytes + text before processing
-✅ BLOCK + DLQ on any hash mismatch — never processes corrupted data
-✅ 4-tier cascade: Regex → CrossRef → NLP → LLM (strict order)
-✅ Bedrock gate: only invoked if confidence < 0.70
-✅ Bedrock input truncated to 1,500 tokens (cost control)
-✅ Confidence cap: Bedrock results hard-capped at 0.90
-✅ Faculty lookup: timeout=3s, retries=2, not_found → BLOCK
-✅ Routing: deterministic, covers all 3 branches
-✅ IAM: no wildcard permissions, specific resource ARNs
-✅ Kafka: idempotent producer, manual offset commit, DLQ on failure
+**Bedrock (Tier 4) calls fail / time out**
+This is expected without real AWS credentials configured — the cascade
+still works using Tiers 1-3 (regex, CrossRef, spaCy), which handle the
+large majority of well-formed papers. Bedrock is only invoked as a
+fallback when Tier 3's confidence is below `LLM_CONFIDENCE_THRESHOLD`
+(default 0.70). No AWS account is required to run a demo.
 
 ---
 
-## 🆘 Troubleshooting
+## 6. What's NOT covered by this guide
 
-### spaCy model not found
-```bash
-python -m spacy download en_core_web_sm
-```
-
-### Bedrock: "AccessDeniedException"
-```bash
-# Enable claude-3-haiku in AWS Bedrock console:
-# https://console.aws.amazon.com/bedrock → Model Access → Enable Anthropic models
-aws bedrock list-foundation-models --region ap-south-1
-```
-
-### Kafka consumer not receiving messages
-```bash
-# Check consumer group lag
-docker exec m3_kafka kafka-consumer-groups \
-  --bootstrap-server localhost:29092 \
-  --group module3-ai-extraction \
-  --describe
-```
-
-### Directory API timeout
-```bash
-# Check mock directory is running
-curl http://localhost:8080/health
-docker-compose logs mock-directory
-```
+- Real AWS Bedrock configuration (IAM role, model access request) — see
+  `terraform/` for that. This guide's demo path works fully without it.
+- Paper-type classification (`extraction_result.metadata.paper_type`
+  currently defaults to `"unknown"` — none of the four extraction tiers
+  classify it yet; flag this if you want it added).

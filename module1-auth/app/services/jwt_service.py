@@ -30,6 +30,7 @@ def create_access_token(
     name: str,
     role: Role,
     department_code: Optional[str] = None,
+    faculty_id: Optional[str] = None,
     auth_type: AuthType = AuthType.user,
     trace_id: Optional[str] = None,
 ) -> str:
@@ -45,6 +46,8 @@ def create_access_token(
         "department_code": department_code,
         "permissions": get_permissions(role),
         "iss": settings.jwt_issuer,
+        "aud": settings.jwt_audience,
+        "faculty_id": faculty_id,
         "exp": int(exp.timestamp()),
         "iat": int(now.timestamp()),
         "auth_type": auth_type.value,
@@ -67,6 +70,8 @@ def create_m2m_token(client_id: str) -> str:
         "department_code": None,
         "permissions": get_permissions(Role.system_worker),
         "iss": settings.jwt_issuer,
+        "aud": settings.jwt_audience,
+        "faculty_id": None,
         "exp": int(exp.timestamp()),
         "iat": int(now.timestamp()),
         "auth_type": AuthType.m2m.value,
@@ -79,11 +84,14 @@ def create_m2m_token(client_id: str) -> str:
 def verify_token(token: str) -> dict:
     """
     Verify and decode a JWT. Raises jwt.PyJWTError on failure.
+    Enforces audience so a token minted for a different API can't be
+    replayed against this service (same claim Modules 5/6 check).
     """
     public_key = _load_key(settings.jwt_public_key_path)
     return jwt.decode(
         token,
         public_key,
         algorithms=[settings.jwt_algorithm],
+        audience=settings.jwt_audience,
         options={"verify_exp": True},
     )

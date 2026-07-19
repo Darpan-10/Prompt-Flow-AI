@@ -11,8 +11,20 @@ class Settings(BaseSettings):
     allowed_domain: str = "srmap.edu.in"
 
     # Gmail OAuth2 — Service Account with Domain-Wide Delegation
-    google_service_account_json: str = ""   # Full JSON from Secrets Manager
-    gmail_delegated_user: str = ""          # e.g. papers@srmap.edu.in
+    google_service_account_json: str = "" # Full JSON from Secrets Manager (service_account mode)
+    gmail_delegated_user: str = ""        # e.g. papers@srmap.edu.in (service_account mode)
+
+    # ── Personal Gmail mode (no Workspace admin needed) ──────────────────
+    # Domain-Wide Delegation is a Google Workspace admin feature — it
+    # cannot work against a personal @gmail.com account at all, regardless
+    # of permissions, since there's no admin console to grant it in. For
+    # a personal-account demo, standard OAuth2 "Desktop app" consent is
+    # the real alternative: one-time browser login (via
+    # scripts/gmail_oauth_login.py), then a cached refresh token handles
+    # everything headless after that — no admin, no delegation required.
+    gmail_auth_mode: str = "service_account"  # "service_account" | "oauth_personal"
+    gmail_oauth_client_secret_path: str = "gmail_oauth_client_secret.json"
+    gmail_oauth_token_path: str = "gmail_oauth_token.json"
 
     # Redis deduplication
     redis_url: str = "redis://localhost:6379"

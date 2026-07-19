@@ -3,38 +3,45 @@ version: '3.9'
 services:
   postgres:
     image: postgres:15-alpine
-    container_name: promptflow_postgres
+    container_name: m1_postgres
     environment:
       POSTGRES_USER: promptflow
       POSTGRES_PASSWORD: secret
       POSTGRES_DB: promptflow
     ports:
-      - "5432:5432"
+      - "5434:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+      - m1_postgres_data:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U promptflow"]
+      test: [ "CMD-SHELL", "pg_isready -U promptflow" ]
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
+    networks:
+      - promptflow_shared_net
 
   redis:
     image: redis:7-alpine
-    container_name: promptflow_redis
+    container_name: m1_redis
     ports:
       - "6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
+    networks:
+      - promptflow_shared_net
 
   auth:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: promptflow_auth
+    container_name: m1_auth
+    env_file: .env
     environment:
       DATABASE_URL: postgresql://promptflow:secret@postgres:5432/promptflow
       REDIS_URL: redis://redis:6379
@@ -53,11 +60,24 @@ services:
       - /app/__pycache__
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
+    networks:
+      - promptflow_shared_net
 
 volumes:
-  postgres_data:
+  m1_postgres_data:
     driver: local
+
+# Fixed external network name, same convention as Modules 4/5/6:
+# 'external: true' lets this compose project join the network
+# regardless of which module's compose file actually creates it
+# (whichever module comes up first "owns" it — see module4-storage's
+# docker-compose.yml for the network's driver definition).
+networks:
+  promptflow_shared_net:
+    external: true
+    name: promptflow_shared_net

@@ -1,92 +1,41 @@
+version: "3.9"
+
+# Module 3: AI Extraction Worker
+#
+# Like Modules 2/5/6, this does NOT run its own Kafka/Zookeeper/Redis/
+# Postgres. The original version of this file spun up a fourth
+# independent Kafka cluster (m3_kafka/m3_zookeeper) with no
+# `networks:` section at all — fully isolated on Docker's default
+# bridge network, unable to reach Module 2's producer OR Module 4's
+# consumer regardless of matching topic names. Same story for Postgres
+# (unused — Module 3's own database_url setting is dead code, same
+# situation as Module 2's was) and Redis (idempotency dedup can live on
+# Module 4's shared instance same as everything else).
+#
+# Prerequisite:
+#   cd ../module4-storage && docker compose up -d postgres redis kafka zookeeper kafka-init
+#   cd ../module2-email-worker && docker compose up -d kafka-init   # creates ingest.raw
+#   cd ../module1-auth && docker compose up -d                       # directory API + M2M auth
+#
+# Then from THIS directory:
+#   docker compose up -d --build
+#
+# No kafka-init here: Module 4's kafka-init already creates
+# papers.validated/review/failed + dlq.ingestion.failed, and Module 2's
+# kafka-init creates ingest.raw — every topic Module 3 touches already
+# exists on the shared broker by the time both of those have run.
+
 services:
-
-  # ── Zookeeper ─────────────────────────────────────────────────────────
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.5.0
-    container_name: m3_zookeeper
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
-    healthcheck:
-      test: ["CMD", "bash", "-c", "echo ruok | nc localhost 2181"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # ── Kafka ─────────────────────────────────────────────────────────────
-  kafka:
-    image: confluentinc/cp-kafka:7.5.0
-    container_name: m3_kafka
-    depends_on:
-      zookeeper:
-        condition: service_healthy
-    ports:
-      - "9093:9093"
-    environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9093
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
-      KAFKA_MIN_INSYNC_REPLICAS: 1
-      KAFKA_NUM_PARTITIONS: 6
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
-    healthcheck:
-      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9093"]
-      interval: 15s
-      timeout: 10s
-      retries: 10
-
-  # ── Kafka Topic Init ──────────────────────────────────────────────────
-  kafka-init:
-    image: confluentinc/cp-kafka:7.5.0
-    container_name: m3_kafka_init
-    depends_on:
-      kafka:
-        condition: service_healthy
-    command: |
-      bash -c "
-      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic ingest.raw --replication-factor 1 --partitions 6 --config retention.ms=604800000 &&
-      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic papers.validated --replication-factor 1 --partitions 6 --config retention.ms=604800000 &&
-      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic papers.review --replication-factor 1 --partitions 6 --config retention.ms=604800000 &&
-      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic papers.failed --replication-factor 1 --partitions 3 --config retention.ms=2592000000 &&
-      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic dlq.ingestion.failed --replication-factor 1 --partitions 3 --config retention.ms=2592000000 &&
-      echo 'All topics created:' &&
-      kafka-topics --bootstrap-server kafka:29092 --list
-      "
-
-  # ── Redis ─────────────────────────────────────────────────────────────
-  redis:
-    image: redis:7-alpine
-    container_name: m3_redis
-    command: redis-server --requirepass localdevtoken --appendonly yes
-    ports:
-      - "6380:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "-a", "localdevtoken", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # ── PostgreSQL ────────────────────────────────────────────────────────
-  postgres:
-    image: postgres:15-alpine
-    container_name: m3_postgres
-    environment:
-      POSTGRES_USER: promptflow
-      POSTGRES_PASSWORD: secret
-      POSTGRES_DB: promptflow
-    ports:
-      - "5433:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U promptflow"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # ── Mock Directory API ────────────────────────────────────────────────
+  # ── Mock Directory API (standalone-testing fallback only) ─────────────
+  # Real integration should use Module 1's actual directory endpoint
+  # (GET /api/faculty/{lookup_key}, M2M-authenticated — see
+  # module1-auth/app/routes/directory.py). This mock never returns a
+  # real faculty_id UUID at all, so results always fall back to the
+  # "unresolved" sentinel — fine for exercising the extraction cascade
+  # in isolation, not a substitute for the real directory when testing
+  # against Module 4. Not in the worker's depends_on; start it manually
+  # with `docker compose up -d mock-directory` if you want it, and set
+  # DIRECTORY_API_URL=http://mock-directory:8080 to use it instead.
   mock-directory:
     build:
       context: ./mock_directory
@@ -95,10 +44,12 @@ services:
     ports:
       - "8080:8080"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/health" ]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - promptflow_shared_net
 
   # ── Module 3 Worker ───────────────────────────────────────────────────
   worker:
@@ -106,17 +57,6 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: m3_ai_extraction_worker
-    depends_on:
-      kafka:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      postgres:
-        condition: service_healthy
-      mock-directory:
-        condition: service_healthy
-      kafka-init:
-        condition: service_completed_successfully
     ports:
       - "8002:8002"
     environment:
@@ -137,10 +77,19 @@ services:
       AWS_REGION: ap-south-1
       S3_INGESTION_BUCKET: promptflow-ingestion-dev
 
-      DIRECTORY_API_URL: "http://mock-directory:8080"
+      # Real directory API (Module 1) by default — see comment above
+      # for the mock-directory alternative.
+      DIRECTORY_API_URL: "http://auth:8000"
       DIRECTORY_TIMEOUT_SECONDS: "3"
       DIRECTORY_MAX_RETRIES: "2"
+      AUTH_SERVICE_URL: "http://auth:8000"
+      M2M_CLIENT_ID: "module3-ai-worker"
+      # Provision this with: cd module1-auth && python scripts/create_service_account.py module3-ai-worker "Module 3 AI Worker"
+      M2M_CLIENT_SECRET: "${M2M_CLIENT_SECRET}"
 
+      # NOTE: unlike Module 2, nothing in Module 3's code actually reads
+      # this yet (no audit logging wired up here) — present for parity/
+      # future use, not currently load-bearing.
       DATABASE_URL: "postgresql://promptflow:secret@postgres:5432/promptflow"
 
       BEDROCK_MODEL_ID: "anthropic.claude-3-haiku-20240307-v1:0"
@@ -148,12 +97,16 @@ services:
       LLM_CONFIDENCE_CAP: "0.90"
 
       DEFAULT_CONFIDENCE_THRESHOLD: "0.75"
+    restart: on-failure
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8002/health" ]
       interval: 30s
       timeout: 5s
       retries: 3
+    networks:
+      - promptflow_shared_net
 
-volumes:
-  postgres_data:
-  redis_data:
+networks:
+  promptflow_shared_net:
+    external: true
+    name: promptflow_shared_net

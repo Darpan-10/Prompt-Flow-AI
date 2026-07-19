@@ -210,15 +210,18 @@ async def process_message(raw_value: bytes, raw_key: bytes) -> None:
         else PipelineStatus.extracted
     )
 
-    output_event = PaperExtractedV1(
-        pipeline_status=pipeline_status,
-        source_event_id=source_event_id,
+    output_event = PaperExtractedV1.build(
         idempotency_key=idempotency_key,
         extracted_metadata=extracted_metadata,
         overall_confidence=overall_confidence,
         enriched_context=enriched_context,
+        routing=routing,
         validation_issues=validation_issues,
-        routing_decision=routing,
+        pipeline_status=pipeline_status,
+        raw_text_hash=payload.content.raw_text_hash,
+        attachments=payload.content.attachments,
+        worker_id=_get_worker_id(),
+        source_event_id=source_event_id,
     )
 
     # ── Step 9: Publish to target topic ───────────────────────────────────
@@ -264,9 +267,7 @@ def _build_failed_event(
         score=0.0, authors_score=0.0, title_score=0.0, venue_year_score=0.0
     )
 
-    return PaperExtractedV1(
-        pipeline_status=PipelineStatus.failed,
-        source_event_id=source_event_id,
+    return PaperExtractedV1.build(
         idempotency_key=idempotency_key,
         extracted_metadata=ExtractedMetadata(
             authors=ExtractedAuthors(),
@@ -275,21 +276,26 @@ def _build_failed_event(
         ),
         overall_confidence=zero_conf,
         enriched_context=EnrichedContext(
-            faculty_id="unknown",
+            faculty_id="00000000-0000-0000-0000-000000000000",
             faculty_status=FacultyStatus.not_found,
         ),
-        validation_issues=[ValidationIssue(
-            code="INTEGRITY_CHECK_FAILED",
-            message=reason,
-            action="BLOCK",
-        )],
-        routing_decision=RoutingDecisionBlock(
+        routing=RoutingDecisionBlock(
             final_action=RoutingDecision.BLOCK,
             reasons=[reason],
             target_topic=settings.kafka_topic_dlq,
             confidence_threshold_used=settings.default_confidence_threshold,
             overall_confidence=0.0,
         ),
+        validation_issues=[ValidationIssue(
+            code="INTEGRITY_CHECK_FAILED",
+            message=reason,
+            action="BLOCK",
+        )],
+        pipeline_status=PipelineStatus.failed,
+        raw_text_hash=payload.content.raw_text_hash,
+        attachments=payload.content.attachments,
+        worker_id=_get_worker_id(),
+        source_event_id=source_event_id,
     )
 
 

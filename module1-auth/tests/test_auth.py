@@ -31,10 +31,11 @@ def make_token(
     name="Test User",
     role=Role.faculty,
     dept="CSE",
+    faculty_id="11111111-1111-1111-1111-111111111111",
 ):
     return create_access_token(
         sub=sub, email=email, name=name,
-        role=role, department_code=dept,
+        role=role, department_code=dept, faculty_id=faculty_id,
     )
 
 
@@ -65,6 +66,8 @@ def test_create_and_verify_access_token():
     assert claims["department_code"] == "CSE"
     assert "paper.view.self" in claims["permissions"]
     assert claims["auth_type"] == "user"
+    assert claims["aud"] == "promptflow-api"
+    assert claims["faculty_id"] == "11111111-1111-1111-1111-111111111111"
 
 
 def test_m2m_token_claims():
@@ -77,6 +80,8 @@ def test_m2m_token_claims():
     # M2M should NOT have user-level permissions
     assert "paper.view.self" not in claims["permissions"]
     assert "user.delete" not in claims["permissions"]
+    assert claims["aud"] == "promptflow-api"
+    assert claims["faculty_id"] is None
 
 
 def test_expired_token_rejected():
@@ -90,6 +95,8 @@ def test_expired_token_rejected():
         "department_code": "CSE",
         "permissions": [],
         "iss": "https://auth.promptflow.ai",
+        "aud": "promptflow-api",
+        "faculty_id": None,
         "exp": int(time.time()) - 100,  # already expired
         "iat": int(time.time()) - 200,
         "auth_type": "user",
@@ -254,9 +261,12 @@ def test_m2m_token_endpoint_valid_credentials():
 @pytest.mark.asyncio
 async def test_audit_log_no_update_permission():
     """
-    This test requires a real DB connection.
-    Verifies that UPDATE on audit_log raises InsufficientPrivilegeError.
-    Skip if no DB available.
+    audit_log is a shared table owned exclusively by Module 4's Alembic
+    migration (schema, partitions, and the immutability triggers all live
+    there now — see module1-auth/schema.sql's comment on why Module 1 no
+    longer creates this table). This test only has something to verify
+    when running against the full integrated system (Module 4's migration
+    already applied to the shared DB); skip on a standalone Module 1 DB.
     """
     import asyncpg
     import os
@@ -266,8 +276,15 @@ async def test_audit_log_no_update_permission():
 
     conn = await asyncpg.connect(db_url)
     try:
+        try:
+            await conn.execute("SELECT 1 FROM audit_log LIMIT 1")
+        except asyncpg.exceptions.UndefinedTableError:
+            pytest.skip("audit_log not present — Module 4's migration owns this table")
+
         with pytest.raises(asyncpg.exceptions.InsufficientPrivilegeError):
-            await conn.execute("UPDATE audit_log SET details = '{}' WHERE log_id = gen_random_uuid()")
+            await conn.execute(
+                "UPDATE audit_log SET details = '{}' WHERE log_id = gen_random_uuid()"
+            )
     finally:
         await conn.close()
 

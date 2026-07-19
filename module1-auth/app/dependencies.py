@@ -64,27 +64,79 @@ def require_permission(permission: str):
 
 class DBSession:
     """
-    Async context manager that acquires a DB connection,
-    injects RLS session variables, and cleans up on exit.
+    Async context manager that acquires a DB connection, opens a
+    transaction, injects RLS session variables, and cleans up on exit.
+
+    Two bugs fixed here (same root causes as the ones found while
+    building Module 4/5/6 — see their app/database.py):
+
+    1. Connection leak: the old version called state.db_pool.acquire()
+       and only released the connection in __aexit__. If anything
+       between acquire() and return raised (including a bad SET LOCAL),
+       __aexit__ never ran and the connection was leaked back to the
+       pool forever. Now acquire + context injection is wrapped in its
+       own try/except so the connection is always released.
+
+    2. SET LOCAL via f-string interpolation: `SET LOCAL app.x = '{value}'`
+       is both a SQL-injection-shaped string build AND functionally
+       broken for the same reason `SET LOCAL ... = $1` is — Postgres's
+       SET is a utility statement and doesn't take bind parameters, but
+       building it via untrusted string interpolation is exactly the
+       injection risk parameterized queries exist to prevent. The fix
+       used across Modules 4/5/6 is set_config(name, value, true): a
+       normal function call, so it accepts bind parameters safely, and
+       the third arg (is_local=true) reproduces SET LOCAL's
+       transaction-scoped behavior. That scoping only works if the
+       injection and the queries that depend on it share one
+       transaction — so unlike the old version (which ran each
+       statement as its own implicit auto-committed transaction and
+       would have silently dropped the RLS context before the caller's
+       first real query), this version opens one explicit transaction
+       for the life of the request and commits/rolls back in __aexit__.
     """
     def __init__(self, claims: dict):
         self.claims = claims
         self.conn = None
+        self._tx = None
 
     async def __aenter__(self):
         self.conn = await state.db_pool.acquire()
-        c = self.claims
-        if c.get("department_code"):
-            await self.conn.execute(
-                f"SET LOCAL app.current_department = '{c['department_code']}'"
-            )
-        await self.conn.execute(f"SET LOCAL app.current_role = '{c['role']}'")
-        await self.conn.execute(f"SET LOCAL app.current_user_id = '{c['sub']}'")
-        return self.conn
+        try:
+            self._tx = self.conn.transaction()
+            await self._tx.start()
 
-    async def __aexit__(self, *_):
-        await self.conn.execute("RESET ALL")
-        await state.db_pool.release(self.conn)
+            c = self.claims
+            await self.conn.execute(
+                "SELECT set_config('app.current_department', $1, true)",
+                c.get("department_code") or "",
+            )
+            await self.conn.execute(
+                "SELECT set_config('app.current_role', $1, true)",
+                c.get("role", ""),
+            )
+            await self.conn.execute(
+                "SELECT set_config('app.current_user_id', $1, true)",
+                c.get("sub", ""),
+            )
+            return self.conn
+        except Exception:
+            if self._tx is not None:
+                await self._tx.rollback()
+            await state.db_pool.release(self.conn)
+            self.conn = None
+            raise
+
+    async def __aexit__(self, exc_type, exc, tb):
+        try:
+            if self.conn is None:
+                return
+            if exc_type is not None:
+                await self._tx.rollback()
+            else:
+                await self._tx.commit()
+        finally:
+            if self.conn is not None:
+                await state.db_pool.release(self.conn)
 
 
 async def get_db_session(claims: dict = Depends(get_current_user)):

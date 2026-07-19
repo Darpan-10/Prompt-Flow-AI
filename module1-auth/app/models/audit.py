@@ -10,6 +10,7 @@ class AuditEvent(BaseModel):
     action: str
     actor_type: Literal["user", "system", "m2m"]
     actor_id: Optional[str]
+    resource_type: str
     resource_id: Optional[str] = None
     details: Optional[Dict[str, Any]] = None
     ip_address: Optional[str] = None
@@ -30,3 +31,14 @@ class AuditAction:
     ACCOUNT_LOCKED = "ACCOUNT_LOCKED"
     SESSION_EXPIRED = "SESSION_EXPIRED"
     M2M_TOKEN_ISSUED = "M2M_TOKEN_ISSUED"
+    USER_PROVISIONED = "USER_PROVISIONED"
+    ROLE_CHANGED = "ROLE_CHANGED"
+    USER_DEACTIVATED = "USER_DEACTIVATED"
+
+
+# resource_type constants — matches Module 4's audit_log.resource_type
+# usage (idx_audit_log_resource is keyed on resource_type + resource_id)
+class ResourceType:
+    AUTH_SESSION = "auth"
+    USER = "user"
+    M2M_CLIENT = "m2m_client"

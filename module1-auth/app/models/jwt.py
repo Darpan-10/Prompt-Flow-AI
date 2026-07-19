@@ -77,6 +77,10 @@ class JWTPayload(BaseModel):
     department_code: Optional[str] = None
     permissions: List[str]
     iss: str
+    aud: str = "promptflow-api"
+    # UUID minted once at admin provisioning (users.faculty_id). Optional
+    # because m2m/system_worker tokens aren't tied to a faculty record.
+    faculty_id: Optional[str] = None
     exp: int
     iat: int
     auth_type: AuthType
@@ -96,3 +100,4 @@ class UserInfo(BaseModel):
     role: Role
     department_code: Optional[str]
     permissions: List[str]
+    faculty_id: Optional[str] = None

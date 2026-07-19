@@ -1,396 +1,401 @@
-# Module 2: Email Ingestion Worker — Setup Guide (Arch Linux)
+# Module 2: Gmail Ingestion Worker — Setup Guide
 
-## 📋 What You Need to Do (In Order)
+Manual, step-by-step instructions. Two paths documented:
 
-### STEP 1 — Install System Dependencies
-
-```bash
-# Python 3.12 (already done from Module 1)
-python3.12 --version
-
-# Docker + Docker Compose
-sudo pacman -S docker docker-compose
-sudo systemctl enable docker
-sudo systemctl start docker
-sudo usermod -aG docker $USER
-newgrp docker  # Apply group change without logout
-```
+- **Path A — Native (venv + Module 4's shared infra via Docker)**
+- **Path B — Fully Dockerized**
 
 ---
 
-### STEP 2 — Google Cloud Setup (Gmail OAuth2)
+## 0. Prerequisites
 
-This is the most important step. Do it carefully.
-
-#### 2a. Create Google Cloud Project
-```
-1. Go to: https://console.cloud.google.com
-2. Create new project: "promptflow-srmap"
-3. Enable Gmail API:
-   → APIs & Services → Library → Search "Gmail API" → Enable
-```
-
-#### 2b. Create Service Account
-```
-1. IAM & Admin → Service Accounts → Create Service Account
-2. Name: promptflow-email-worker
-3. Click "Create and Continue" → Skip roles → Done
-4. Click the service account → Keys → Add Key → JSON
-5. Download the JSON file → KEEP IT SAFE
-```
-
-#### 2c. Enable Domain-Wide Delegation
-```
-1. Click the service account → Details tab
-2. Enable "Enable Google Workspace Domain-wide Delegation"
-3. Note the Client ID (numeric, e.g. 123456789012345678901)
-```
-
-#### 2d. Google Workspace Admin Console (your IT admin must do this)
-```
-1. Go to: https://admin.google.com
-2. Security → API Controls → Domain-wide Delegation
-3. Click "Add new" → Enter Client ID from step 2c
-4. OAuth Scopes: https://www.googleapis.com/auth/gmail.readonly
-5. Authorize
-```
-
-#### 2e. Set the JSON in your .env
-```bash
-# Convert JSON file to single line and add to .env
-cat service-account.json | python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin)))" > sa_oneline.txt
-
-# Copy contents of sa_oneline.txt into .env as:
-# GOOGLE_SERVICE_ACCOUNT_JSON={"type":"service_account",...}
-```
+| Tool | Version | Check with |
+|---|---|---|
+| Python | 3.12.x | `python3 --version` |
+| Docker | 24+ | `docker --version` |
+| Docker Compose | v2 | `docker compose version` |
+| Google Service Account JSON | — | see "Gmail Setup" below |
 
 ---
 
-### STEP 3 — Project Setup
+## 1. Unzip
 
 ```bash
-# Extract zip
 unzip module2-email-worker.zip
 cd module2-email-worker
+```
 
-# Create Python 3.12 virtual environment
-python3.12 -m venv venv
+---
+
+## 2. Gmail Setup (required for both paths)
+
+Two ways to authorize this app against a Gmail inbox — pick one.
+
+### Option 1 — Personal Gmail account (no admin access needed)
+
+Use this if you're demoing with your own `@gmail.com` (or any account
+you don't have Workspace admin control over). Standard OAuth2 consent —
+you personally approve read-only access once in a browser, then it's
+headless from there on.
+
+1. **Google Cloud Console** (https://console.cloud.google.com) → create
+   a project → APIs & Services → Enable APIs → enable **Gmail API**.
+
+2. **OAuth consent screen**: APIs & Services → OAuth consent screen →
+   External → fill in an app name + your email → Save. It's fine to
+   leave this in "Testing" status for a demo — just add your own Gmail
+   address under **Test users** (Google requires this for apps that
+   haven't gone through verification).
+
+3. **Create an OAuth client**: APIs & Services → Credentials → Create
+   Credentials → OAuth client ID → Application type: **Desktop app**.
+   Download the JSON.
+
+4. Save it as `gmail_oauth_client_secret.json` in this directory
+   (`module2-email-worker/`).
+
+5. Run the one-time interactive login (opens your browser):
+   ```bash
+   python scripts/gmail_oauth_login.py
+   ```
+   Log in, approve the read-only Gmail scope. This writes
+   `gmail_oauth_token.json` — a cached, auto-refreshing token. You won't
+   need to do this again unless you delete that file or revoke access.
+
+6. In `.env`, set:
+   ```env
+   GMAIL_AUTH_MODE=oauth_personal
+   ```
+
+That's it — no Workspace admin, no delegation. The worker reads from
+whatever inbox you logged in as in step 5.
+
+### Option 2 — Google Workspace domain (requires admin access)
+
+Use this only if you actually have admin control over a Workspace
+domain (e.g. your college's real IT-managed `@srmap.edu.in`). Headless
+via Service Account + Domain-Wide Delegation — genuinely cannot work
+against a personal account, there's no delegation to grant on one.
+
+1. **Google Cloud Console** → create a project → enable **Gmail API**.
+
+2. **Create a Service Account**: APIs & Services → Credentials → Create
+   Credentials → Service Account → create a JSON key, download it.
+
+3. **Domain-Wide Delegation**:
+   - In the service account's details → Advanced settings → enable
+     domain-wide delegation, note the numeric Client ID.
+   - In Google Workspace Admin Console → Security → API Controls →
+     Domain-wide Delegation → add that Client ID with scope
+     `https://www.googleapis.com/auth/gmail.readonly`.
+
+4. Flatten the JSON to one line (required — it's a single env var):
+   ```bash
+   python3 -c "import json; print(json.dumps(json.load(open('/path/to/key.json'))))"
+   ```
+
+5. In `.env`, set:
+   ```env
+   GMAIL_AUTH_MODE=service_account
+   GOOGLE_SERVICE_ACCOUNT_JSON=<paste the single-line JSON from step 4>
+   GMAIL_DELEGATED_USER=papers@srmap.edu.in
+   ```
+
+---
+
+# PATH A — Native Python
+
+## A.1 — Virtual environment
+
+```bash
+python3 -m venv venv
 source venv/bin/activate
+```
 
-# Install dependencies
+## A.2 — Install dependencies
+
+```bash
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
----
-
-### STEP 4 — Environment Configuration
+## A.3 — Create `.env`
 
 ```bash
 cp .env.example .env
-nano .env  # Fill in your values
 ```
 
-Key values to set:
+Fill in your Gmail credentials from whichever option you used in step 2,
+and double-check the infra ports — these point at **Module 4's shared
+services**, not local ones:
+
 ```env
-GOOGLE_SERVICE_ACCOUNT_JSON=<paste single-line JSON here>
-GMAIL_DELEGATED_USER=papers@srmap.edu.in
-REDIS_URL=redis://:localdevtoken@localhost:6379
-KAFKA_BOOTSTRAP_SERVERS=localhost:9092
-S3_INGESTION_BUCKET=promptflow-ingestion-dev
-S3_QUARANTINE_BUCKET=promptflow-quarantine-dev
+# From section 2, Option 1 (personal) or Option 2 (Workspace admin):
+GMAIL_AUTH_MODE=oauth_personal
+# ...plus whichever GOOGLE_*/GMAIL_* vars that option requires
+
+# Module 4's shared Kafka/Redis/Postgres — note these ports are NOT the
+# defaults (9092/6379/5432). Module 4 deliberately maps to 9093/6380/5433
+# on the host so it doesn't clash with Module 1's own separate
+# Postgres/Redis (which use 5434/6379 — see module1-auth/SETUP.md for
+# why 5434 specifically).
+KAFKA_BOOTSTRAP_SERVERS=localhost:9093
+REDIS_URL=redis://:localdevtoken@localhost:6380
+DATABASE_URL=postgresql://promptflow:secret@localhost:5433/promptflow
 ```
 
----
-
-### STEP 5 — Start Local Infrastructure (Docker)
+## A.4 — Set up Gmail auth (if using `oauth_personal`)
 
 ```bash
-# Start all services: Kafka, Zookeeper, Redis, PostgreSQL, ClamAV
-docker-compose up -d postgres redis zookeeper kafka clamav
-
-# Wait for services to be healthy (~2 min for ClamAV to load signatures)
-docker-compose ps
-
-# Check Kafka is ready
-docker-compose logs kafka | grep "started"
-
-# Create Kafka topics
-docker-compose up kafka-init
+python scripts/gmail_oauth_login.py
 ```
 
-Verify topics created:
-```bash
-docker exec promptflow_kafka kafka-topics \
-  --bootstrap-server localhost:9092 --list
-# Should show: ingest.raw, dlq.ingestion.failed
-```
+Opens your browser for a one-time consent. Writes `gmail_oauth_token.json`
+in this directory — the worker reads and auto-refreshes it from here on,
+no browser needed again. (Skip this if you're using `service_account`
+mode instead — nothing to do here in that case.)
 
----
-
-### STEP 6 — AWS S3 Buckets (Local Testing)
-
-For local testing, create buckets using LocalStack OR real AWS:
-
-#### Option A: Real AWS (recommended)
-```bash
-# Configure AWS credentials
-aws configure
-# Region: ap-south-1
-
-# Create buckets
-aws s3 mb s3://promptflow-ingestion-dev --region ap-south-1
-aws s3 mb s3://promptflow-quarantine-dev --region ap-south-1
-
-# Block public access
-aws s3api put-public-access-block \
-  --bucket promptflow-ingestion-dev \
-  --public-access-block-configuration \
-    "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
-```
-
-#### Option B: LocalStack (no AWS account needed)
-```bash
-# Add to docker-compose (or run separately)
-pip install awscli-local
-docker run -d -p 4566:4566 localstack/localstack
-
-# Create buckets on localstack
-awslocal s3 mb s3://promptflow-ingestion-dev
-awslocal s3 mb s3://promptflow-quarantine-dev
-
-# Update .env:
-# AWS_ENDPOINT_URL=http://localhost:4566
-```
-
----
-
-### STEP 7 — Run Tests
+## A.5 — Create the shared network (one-time, system-wide)
 
 ```bash
-source venv/bin/activate
-pytest tests/test_validation.py -v
+docker network create promptflow_shared_net || true
 ```
 
-Expected output:
-```
-test_domain_validation_accepts_srmap           PASSED
-test_domain_validation_rejects_non_srmap       PASSED
-test_domain_validation_rejects_subdomain_spoof PASSED
-test_pii_redaction_phone_numbers               PASSED
-test_pii_redaction_student_ids                 PASSED
-test_pii_redaction_external_emails             PASSED
-test_pii_redaction_preserves_srmap_email       PASSED
-test_pii_redaction_multiple_patterns           PASSED
-test_hash_separation                           PASSED
-test_idempotency_key_is_deterministic          PASSED
-test_idempotency_key_formula                   PASSED
-test_event_schema_valid                        PASSED
-test_event_schema_rejects_wrong_contract_version PASSED
-test_event_schema_hash_collision_rejected      PASSED
-...
-```
-
----
-
-### STEP 8 — Run the Worker
+## A.6 — Start Module 4's shared infra
 
 ```bash
-source venv/bin/activate
-uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+cd ../module4-storage
+docker compose up -d postgres redis zookeeper kafka
+docker compose ps   # wait for all to show "healthy", ~30 seconds
+
+docker compose up kafka-init   # creates Module 4's own topics
+cd ../module2-email-worker
 ```
 
-Or with Docker:
+## A.7 — Create Module 2's own Kafka topic
+
+Module 4's `kafka-init` only creates the topics Module 4 itself consumes
+(`papers.*`, `dlq.ingestion.failed`) — it has no reason to know about
+`ingest.raw`, which is Module 2's own output topic. Module 2 is
+responsible for making sure that one exists:
+
 ```bash
-docker-compose up worker
+docker compose up kafka-init
 ```
 
-Health check:
+Confirm:
+```bash
+docker exec m4_kafka kafka-topics --bootstrap-server localhost:29092 --list
+```
+Should include `ingest.raw` and `dlq.ingestion.failed` (plus Module 4's
+own topics).
+
+## A.8 — Start ClamAV
+
+```bash
+docker compose up -d clamav
+docker compose ps
+```
+
+Wait for it to load virus signatures (~1-2 minutes on first run):
+```bash
+docker compose logs -f clamav
+```
+Look for a line mentioning the database is loaded, then Ctrl+C.
+
+## A.9 — Run the test suite
+
+```bash
+pytest tests/test_validation.py -q --asyncio-mode=auto
+```
+
+Expected: **25 passed**. These are unit tests (domain validation, PII
+redaction regex, idempotency key generation) — no live Kafka/Postgres
+needed.
+
+## A.10 — Start the worker
+
+```bash
+python -m app.main
+```
+
+This starts both the FastAPI health-check server AND the background
+Gmail-polling worker thread (see `app/main.py`'s startup event).
+
+## A.11 — Smoke test
+
 ```bash
 curl http://localhost:8001/health
-curl http://localhost:8001/ready
+```
+
+## A.12 — Stopping everything
+
+```bash
+# Ctrl+C in the worker terminal
+docker compose down                      # stops ClamAV + kafka-init
+cd ../module4-storage && docker compose down   # stops shared infra (keeps data)
 ```
 
 ---
 
-### STEP 9 — AWS Production Deployment (Terraform)
+# PATH B — Fully Dockerized
 
-#### 9a. Bootstrap Terraform state (run ONCE)
+## B.1 — Shared network
+
 ```bash
-chmod +x scripts/bootstrap_terraform_state.sh
-./scripts/bootstrap_terraform_state.sh
+docker network create promptflow_shared_net || true
 ```
 
-#### 9b. Initialize Terraform
+## B.2 — Start Module 4's shared infra
+
 ```bash
-cd terraform/
-terraform init
+cd ../module4-storage
+docker compose up -d postgres redis zookeeper kafka
+docker compose up kafka-init
+cd ../module2-email-worker
 ```
 
-#### 9c. Plan
+## B.3 — Configure `.env`
+
 ```bash
-terraform plan \
-  -var-file=dev.tfvars \
-  -var="db_password=$DB_PASSWORD" \
-  -var="redis_auth_token=$REDIS_TOKEN" \
-  -var="imap_password=$IMAP_PASSWORD"
+cp .env.example .env
+# Fill in GMAIL_AUTH_MODE and whichever credentials it needs (section 2 above)
 ```
 
-#### 9d. Apply
+`docker-compose.yml`'s `worker` service overrides `KAFKA_BOOTSTRAP_SERVERS`,
+`REDIS_URL`, and `DATABASE_URL` to the internal container hostnames
+(`kafka:29092`, `redis:6379`, `postgres:5432`) automatically — the `.env`
+values above are only used if you run Path A (native, outside Docker).
+
+## B.4 — Set up the Gmail OAuth files on the host (if using `oauth_personal`)
+
+`docker-compose.yml` bind-mounts `gmail_oauth_client_secret.json` and
+`gmail_oauth_token.json` into the container. **Both must already exist
+on the host before you run `docker compose up`** — if a bind-mounted
+file doesn't exist yet, Docker silently creates an empty *directory*
+with that name instead of erroring, which then breaks everything and
+isn't obvious from the logs. The interactive login itself needs a real
+browser, which the container doesn't have, so this has to happen on the
+host either way:
+
 ```bash
-terraform apply \
-  -var-file=dev.tfvars \
-  -var="db_password=$DB_PASSWORD" \
-  -var="redis_auth_token=$REDIS_TOKEN" \
-  -var="imap_password=$IMAP_PASSWORD" \
-  -auto-approve
+python3 -m venv /tmp/gmail-oauth-venv && source /tmp/gmail-oauth-venv/bin/activate
+pip install --quiet -r requirements.txt
+python scripts/gmail_oauth_login.py    # opens your browser, one-time consent
+deactivate && rm -rf /tmp/gmail-oauth-venv
 ```
 
-#### 9e. Create Kafka topics on MSK
+This leaves `gmail_oauth_client_secret.json` and `gmail_oauth_token.json`
+in this directory, ready for the bind mount.
+
+**If you're using `service_account` mode instead**, these two files are
+still bind-mounted but never read — create empty placeholders so Docker
+doesn't turn them into directories:
 ```bash
-BOOTSTRAP=$(terraform output -raw kafka_bootstrap_brokers)
-chmod +x ../scripts/create_topics.sh
-../scripts/create_topics.sh "$BOOTSTRAP"
+touch gmail_oauth_client_secret.json gmail_oauth_token.json
 ```
 
-#### 9f. Destroy when done
+## B.5 — Build and start
+
 ```bash
-terraform destroy -var-file=dev.tfvars
+docker compose build --no-cache
+docker compose up -d kafka-init clamav worker
+docker compose ps
+```
+
+Wait for `clamav` to show healthy (~1-2 min) and `worker` to show healthy.
+
+## B.6 — Check logs
+
+```bash
+docker compose logs -f worker
+```
+
+## B.7 — Smoke test
+
+```bash
+docker compose exec worker curl -f http://localhost:8001/health
+```
+
+## B.8 — Run tests inside the container
+
+```bash
+docker compose exec worker pytest tests/test_validation.py -q --asyncio-mode=auto
+```
+
+## B.9 — Stopping everything
+
+```bash
+docker compose down
+cd ../module4-storage && docker compose down
 ```
 
 ---
 
-## 🗂️ Complete File Structure
+## 3. Testing the pipeline manually (either path)
 
+Module 2 normally consumes real Gmail messages, but you can inject a
+synthetic one straight into Kafka to test downstream processing (Module 3)
+without waiting on an actual email:
+
+```bash
+cat > /tmp/test_ingest.json << 'PAYLOAD'
+{"event_id":"test-1","contract_version":"v1","pipeline_status":"ingested","created_at":"2026-07-17T10:00:00Z","email":{"message_id":"<1@test>","subject":"Test Paper","sender":"faculty@srmap.edu.in","recipients":["papers@srmap.edu.in"],"received_at":"2026-07-17T10:00:00Z","idempotency_key":"test-idem-0001"},"content":{"raw_text":"Title: Deep Learning Survey. Authors: Jane Doe. DOI: 10.1234/test.2026. Year: 2026.","raw_text_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","attachments":[]},"security":{"pii_redacted":true,"source_domain_verified":true,"clamav_scanned":true,"clamav_result":"CLEAN"}}
+PAYLOAD
+
+docker exec -i m4_kafka kafka-console-producer \
+  --broker-list localhost:29092 --topic ingest.raw < /tmp/test_ingest.json
 ```
-module2-email-worker/
-├── app/
-│   ├── main.py                    # FastAPI health + worker thread
-│   ├── config.py                  # Pydantic settings
-│   ├── worker.py                  # 11-step pipeline orchestrator
-│   ├── models/
-│   │   └── events.py              # paper.ingested.v1 strict schema
-│   ├── services/
-│   │   ├── gmail_auth.py          # OAuth2 service account (headless)
-│   │   ├── email_parser.py        # MIME parsing
-│   │   ├── pii_redactor.py        # PII redaction (3 regex patterns)
-│   │   ├── clamav.py              # ZINSTSTREAM malware scan
-│   │   ├── s3_uploader.py         # Multipart upload + quarantine
-│   │   ├── kafka_producer.py      # Idempotent producer + DLQ
-│   │   └── redis_dedup.py         # 7-day dedup TTL
-│   └── utils/
-│       └── hashing.py             # SHA256 (file vs text — strict separation)
-├── terraform/
-│   ├── main.tf                    # Root module
-│   ├── backend.tf                 # S3 + DynamoDB state
-│   ├── variables.tf               # Input variables
-│   ├── outputs.tf                 # Outputs
-│   ├── dev.tfvars                 # Dev environment values
-│   └── modules/
-│       ├── vpc/                   # VPC, 3 private subnets, NAT
-│       ├── rds/                   # PostgreSQL 15, IAM auth, private
-│       ├── elasticache/           # Redis 7, auth, encrypted
-│       ├── msk/                   # Kafka, SASL, private subnets
-│       ├── s3/                    # Ingestion + quarantine + lifecycle
-│       ├── cognito/               # User pool + M2M client
-│       ├── iam/                   # Least-privilege worker role
-│       └── secrets/               # Secrets Manager (no hardcoded values)
-├── tests/
-│   ├── conftest.py
-│   └── test_validation.py         # All hard constraint validations
-├── scripts/
-│   ├── create_topics.sh           # MSK topic creation
-│   └── bootstrap_terraform_state.sh # One-time state backend setup
-├── requirements.txt
-├── .env.example
-├── Dockerfile
-├── docker-compose.yml
-└── SETUP.md
+
+(`-i` on `docker exec` is required to pipe stdin into the container —
+without it, redirecting a file into the command silently does nothing.)
+
+Verify it landed:
+```bash
+docker exec m4_kafka kafka-console-consumer --bootstrap-server localhost:29092 \
+  --topic ingest.raw --from-beginning --max-messages 1
 ```
 
 ---
 
-## 🔐 Security Checklist
+## 4. Common problems and fixes
 
-✅ Domain lock: @srmap.edu.in only — all else rejected
-✅ PII redacted BEFORE hashing/storage (3 regex patterns)
-✅ checksum_sha256 ≠ raw_text_hash (enforced by schema)
-✅ Idempotency: SHA256(message_id:filename) — deterministic
-✅ ClamAV ZINSTSTREAM scan — infected → quarantine, no Kafka publish
-✅ Kafka: enable.idempotence=true, acks=all
-✅ DLQ: dlq.ingestion.failed — never silently drops messages
-✅ Redis dedup: Message-ID, In-Reply-To, References (7-day TTL)
-✅ S3: versioning, AES256, block public access, NAAC lifecycle
-✅ IAM: no wildcard (*) permissions — specific ARNs only
-✅ Secrets Manager: no hardcoded credentials anywhere
-✅ RDS + Redis + MSK: private subnets only, no public IPs
+**`Connection refused` on Kafka from a native (Path A) process**
+You're probably using port `9092`. Module 4's Kafka only exposes
+`9093` to the host (`9092` isn't mapped at all — see
+`module4-storage/docker-compose.yml`'s `KAFKA_ADVERTISED_LISTENERS`).
+`9092` is a red herring left over from Kafka's usual default; check `.env`.
 
----
+**Redis `NOAUTH Authentication required`**
+Module 4's Redis requires a password (`localdevtoken`). Make sure
+`REDIS_URL` includes it: `redis://:localdevtoken@localhost:6380`.
 
-## 🧪 Verify All Hard Constraints
+**`docker compose up` fails: "network promptflow_shared_net not found"**
+Run `docker network create promptflow_shared_net` once (step A.4/B.1) —
+or start Module 4 first, which creates it automatically.
 
-```bash
-# Run full validation suite
-pytest tests/test_validation.py -v
+**ClamAV healthcheck never turns healthy**
+It takes 1-2 minutes to download/load virus signatures on first start.
+Check progress: `docker compose logs -f clamav`. If it's been more than
+5 minutes, check disk space — the signature database is a few hundred MB.
 
-# Check Kafka topics exist
-docker exec promptflow_kafka \
-  kafka-topics --bootstrap-server localhost:9092 --list
+**Worker logs show `psycopg2.OperationalError: could not connect`**
+Audit logging (`app/services/audit.py`) needs Module 4's Postgres up.
+This failure is non-fatal by design — ingestion still proceeds, and the
+error is logged as `AUDIT_WRITE_FAILED` rather than crashing the worker —
+but confirm `docker compose ps postgres` in `module4-storage/` shows healthy.
 
-# Check Redis connectivity
-redis-cli -a localdevtoken ping
-
-# Check ClamAV is scanning
-echo "X5O!P%@AP[4\\PZX54(P^)7CC)7}\$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!\$H+H*" | \
-  nc localhost 3310
-
-# Check health endpoint
-curl http://localhost:8001/health | python3 -m json.tool
-```
+**`kafka-topics` command inside a container says "command not found"**
+Run it against `m4_kafka` (has the Confluent Kafka CLI tools baked in),
+not `m2_email_worker` (a plain Python image — no Kafka CLI tools there).
 
 ---
 
-## 🚨 Troubleshooting
+## 5. What's NOT covered by this guide
 
-### Gmail Auth: "GOOGLE_SERVICE_ACCOUNT_JSON is not set"
-```bash
-# Verify env variable is set
-echo $GOOGLE_SERVICE_ACCOUNT_JSON | python3 -m json.tool | head -5
-```
-
-### Kafka: "Connection refused"
-```bash
-docker-compose ps kafka  # Is it healthy?
-docker-compose logs kafka | tail -20
-```
-
-### ClamAV: Takes too long to start
-```bash
-# Normal — ClamAV loads ~300MB virus definitions at startup
-# Wait 2-3 minutes, then check:
-docker-compose logs clamav | grep "Listening"
-```
-
-### Redis: "WRONGPASS invalid username-password pair"
-```bash
-# Make sure URL includes the password
-# REDIS_URL=redis://:localdevtoken@localhost:6379
-redis-cli -a localdevtoken ping
-```
-
-### S3: "NoCredentialsError"
-```bash
-aws configure  # Set your AWS credentials
-aws sts get-caller-identity  # Verify
-```
-
----
-
-## 📌 Next Steps
-
-1. ✅ Run tests: `pytest tests/ -v`
-2. ✅ Start infra: `docker-compose up -d`
-3. ✅ Run worker: `uvicorn app.main:app --port 8001 --reload`
-4. ✅ Send a test email to papers@srmap.edu.in
-5. ✅ Watch Kafka topic: `kafka-console-consumer --topic ingest.raw --bootstrap-server localhost:9092 --from-beginning`
-6. ✅ Move to Module 3: Paper Processing & NLP pipeline
+- Real AWS SES/S3 for attachment storage in production — this guide uses
+  local dev bucket names (`promptflow-ingestion-dev`) that only work if
+  you've configured real AWS credentials; without them, attachment
+  upload will fail (email text extraction and Kafka publish still work).
+- ElastiCache auth token rotation (Terraform-managed) — local dev uses a
+  fixed password (`localdevtoken`) baked into `docker-compose.yml`.

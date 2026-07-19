@@ -37,16 +37,23 @@ async def test_department_isolation_rls(db_pool):
 
 @pytest.mark.asyncio
 async def test_audit_log_immutability(db_pool):
-    """Test that audit log cannot be updated."""
+    """
+    Test that audit log cannot be updated.
+    audit_log is owned by Module 4's migration now (see schema.sql) — skip
+    if it isn't present, e.g. when running Module 1 standalone without
+    Module 4's migration applied to the same DB.
+    """
     async with db_pool.acquire() as conn:
-        # Insert audit log
-        log_id = await conn.fetchval("""
-            INSERT INTO audit_log 
-            (action, actor_type, actor_id, details)
-            VALUES ('TEST_ACTION', 'user', 'test_user', '{"test": true}')
-            RETURNING log_id
-        """)
-        
+        try:
+            log_id = await conn.fetchval("""
+                INSERT INTO audit_log
+                (action, actor_type, actor_id, resource_type, details)
+                VALUES ('TEST_ACTION', 'user', 'test_user', 'user', '{"test": true}')
+                RETURNING log_id
+            """)
+        except asyncpg.exceptions.UndefinedTableError:
+            pytest.skip("audit_log not present — Module 4's migration owns this table")
+
         # Try to update (should fail)
         with pytest.raises(Exception):  # asyncpg.InsufficientPrivilegeError
             await conn.execute(
@@ -59,10 +66,13 @@ async def test_audit_log_immutability(db_pool):
 async def test_audit_log_insert_succeeds(db_pool):
     """Test that audit log INSERT works."""
     async with db_pool.acquire() as conn:
-        result = await conn.fetchval("""
-            INSERT INTO audit_log 
-            (action, actor_type, actor_id)
-            VALUES ('LOGIN_SUCCESS', 'user', 'test_user')
-            RETURNING log_id
-        """)
+        try:
+            result = await conn.fetchval("""
+                INSERT INTO audit_log
+                (action, actor_type, actor_id, resource_type)
+                VALUES ('LOGIN_SUCCESS', 'user', 'test_user', 'user')
+                RETURNING log_id
+            """)
+        except asyncpg.exceptions.UndefinedTableError:
+            pytest.skip("audit_log not present — Module 4's migration owns this table")
         assert result is not None

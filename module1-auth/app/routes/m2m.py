@@ -8,7 +8,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from app.services.cognito import verify_m2m_client
 from app.services.jwt_service import create_m2m_token
 from app.services.audit import log_audit
-from app.models.audit import AuditAction
+from app.models.audit import AuditAction, ResourceType
 
 router = APIRouter()
 security = HTTPBasic()
@@ -33,6 +33,7 @@ async def m2m_token(
             action=AuditAction.LOGIN_FAILED,
             actor_type="m2m",
             actor_id=credentials.username,
+            resource_type=ResourceType.M2M_CLIENT,
             details={"reason": "invalid_m2m_credentials"},
             request=request,
         )
@@ -44,6 +45,7 @@ async def m2m_token(
         action=AuditAction.M2M_TOKEN_ISSUED,
         actor_type="system",
         actor_id=credentials.username,
+        resource_type=ResourceType.M2M_CLIENT,
         request=request,
     )
 

@@ -1,6 +1,8 @@
+# pyrefly: ignore [missing-import]
 from pydantic_settings import BaseSettings
+# pyrefly: ignore [missing-import]
 from pydantic import ConfigDict, field_validator
-from typing import List
+from typing import List, Any
 
 
 class Settings(BaseSettings):
@@ -10,9 +12,9 @@ class Settings(BaseSettings):
     )
 
     app_env: str = "development"
-    allowed_origins: List[str] = ["http://localhost:3000"]
+    allowed_origins: Any = ["http://localhost:3000"]
 
-    allowed_email_domains: List[str] = ["srmap.edu.in"]
+    allowed_email_domains: Any = ["srmap.edu.in"]
 
     jwt_private_key_path: str = "keys/private.pem"
     jwt_public_key_path: str = "keys/public.pem"
@@ -30,11 +32,12 @@ class Settings(BaseSettings):
     cognito_domain: str = ""
 
     jwt_issuer: str = "https://auth.promptflow.ai"
+    jwt_audience: str = "promptflow-api"
 
     rate_limit_attempts: int = 5
     rate_limit_window_seconds: int = 60
 
-    @field_validator("allowed_email_domains", mode="before")
+    @field_validator("allowed_email_domains", "allowed_origins", mode="before")
     @classmethod
     def parse_domains(cls, v):
         if isinstance(v, str):
