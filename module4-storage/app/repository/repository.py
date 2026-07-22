@@ -333,14 +333,14 @@ class SearchRepository:
                 p.department_code,
                 p.status,
                 CAST(p.overall_confidence AS FLOAT) AS overall_confidence,
-                1.0 - (p.embedding <=> :embedding::vector) AS similarity
+                1.0 - (p.embedding <=> :embedding ::vector) AS similarity
             FROM papers p
             WHERE
                 p.status = 'PUBLISHED'
                 AND p.embedding IS NOT NULL
                 {dept_filter}
-                AND (p.embedding <=> :embedding::vector) <= :threshold
-            ORDER BY p.embedding <=> :embedding::vector
+                AND (p.embedding <=> :embedding ::vector) <= :threshold
+            ORDER BY p.embedding <=> :embedding ::vector
             LIMIT :limit
         """)
 

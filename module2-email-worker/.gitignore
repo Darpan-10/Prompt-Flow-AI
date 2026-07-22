@@ -35,3 +35,5 @@ terraform/.terraform.lock.hcl
 # OS
 .DS_Store
 Thumbs.db
+gmail_oauth_client_secret.json
+gmail_oauth_token.json

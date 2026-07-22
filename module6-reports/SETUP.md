@@ -316,7 +316,7 @@ generation runs as a background task, not inline in the request (per
 the locked anti-pattern rule). Poll for completion:
 
 ```bash
-export REPORT_ID="<paste report_id from above>"
+export REPORT_ID="828da4fd-d1d4-4e5e-b13a-35455a59b7ae"
 
 curl http://localhost:8006/api/v1/reports/$REPORT_ID \
   -H "Authorization: Bearer $TEST_JWT_TOKEN"

@@ -42,8 +42,8 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Gmail API scopes — readonly is sufficient for ingestion
-GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+# Gmail API scopes — modify is required to mark messages as read
+GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 
 
 def _get_credentials_service_account() -> service_account.Credentials:

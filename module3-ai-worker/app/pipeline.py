@@ -302,9 +302,9 @@ def _build_failed_event(
 def run_worker_loop() -> None:
     """Main polling loop — consumes from ingest.raw indefinitely."""
     logger.info(
-        "Module 3 worker starting | consumer_group=%s | topic=%s",
+        "Module 3 worker starting | consumer_group=%s | topics=%s",
         settings.kafka_consumer_group,
-        settings.kafka_topic_ingest_raw,
+        [settings.kafka_topic_ingest_raw],
     )
 
     consumer = get_consumer()
@@ -352,3 +352,10 @@ def run_worker_loop() -> None:
 
 # Needed for import in worker.py
 from confluent_kafka import KafkaError
+
+if __name__ == "__main__":
+    logging.basicConfig(
+        level=getattr(logging, settings.log_level.upper(), logging.INFO),
+        format="%(message)s",
+    )
+    run_worker_loop()

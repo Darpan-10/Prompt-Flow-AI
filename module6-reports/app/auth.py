@@ -19,15 +19,15 @@ log = logging.getLogger(__name__)
 
 
 def _decode_jwt(token: str) -> dict:
-    if settings.SKIP_JWT_VALIDATION:
-        return jwt.decode(token, options={"verify_signature": False})
-
-    if not settings.JWT_PUBLIC_KEY:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="JWT_PUBLIC_KEY not configured and SKIP_JWT_VALIDATION is false",
-        )
     try:
+        if settings.SKIP_JWT_VALIDATION:
+            return jwt.decode(token, options={"verify_signature": False})
+
+        if not settings.JWT_PUBLIC_KEY:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="JWT_PUBLIC_KEY not configured and SKIP_JWT_VALIDATION is false",
+            )
         return jwt.decode(
             token,
             settings.JWT_PUBLIC_KEY,
